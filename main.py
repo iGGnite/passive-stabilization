@@ -2,10 +2,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 class Panel:
-    def __init__(self, length: float, width: float, normal_vector: np.array, body: bool = True):
+    def __init__(self, length: float, width: float, normal_vector: np.array, forward_vector: np.array, body: bool = True):
+        A_inv = np.matrix(
+            [[1, 0, 0],
+             [0, 1, 0],
+             [0, 0, 1]]
+        )
         self.length = length
         self.width = width
-        self.normal_vector = normal_vector
+        self.n = normal_vector
+        self.f = forward_vector
         ### Panel origin in centre of panel ###
         self.local_nodes = np.array((
             [-self.length/2, self.width/2,  0],
@@ -13,10 +19,16 @@ class Panel:
             [ self.length/2, self.width/2,  0],
             [ self.length/2, -self.width/2, 0],
         ))
-        self.global_nodes = np.array
+        n_cross_f = np.cross(self.n, self.f)
+        B = np.matrix(np.vstack((self.f, n_cross_f, self.n))).T
+        self.initial_forward_vector = np.array([1, 0, 0])
+        self.initial_normal_vector = np.array([0, 0, 1])
+        new_normal_vector = B @ self.initial_normal_vector
+        new_forward_vector = B @ self.initial_forward_vector
+        self.local_nodes = (B @ self.local_nodes.T).T
 
     def define_global_nodes(self, position_vector: np.array):
-        self.global_nodes = self.local_nodes + position_vector
+        self.global_nodes = np.array(self.local_nodes + position_vector)
 
 class Satellite:
     def __init__(self, x_len: float, y_width: float, z_width: float, panel_length: float, panel_width: float,
@@ -47,6 +59,11 @@ class Satellite:
             np.array([-self.x_len/2, self.y_width/2, 0]), np.array([-self.x_len/2, -self.y_width/2, 0]),
             np.array([-self.x_len/2, 0, self.z_width/2]), np.array([-self.x_len/2, 0, -self.z_width/2]),
         ]
+        self.body_forward_vectors = [
+            np.array([0, 0, 1]), np.array([0, 0, 1]),
+            np.array([1, 0, 0]), np.array([1, 0, 0]),
+            np.array([1, 0, 0]), np.array([1, 0, 0]),
+        ]
         self.body_normal_vectors = [
             np.array([1, 0, 0]), np.array([-1, 0, 0]),  # x forward, x backward
             np.array([0, 1, 0]), np.array([0, -1, 0]),  # y right, y left
@@ -55,13 +72,14 @@ class Satellite:
         self.panel_nodes = []
         for idx, panel_center in enumerate(self.body_panel_centres):
             if idx < 2:  # front and back
-                panel = Panel(self.y_width, self.z_width, self.body_normal_vectors[idx])
+                panel = Panel(self.y_width, self.z_width, self.body_normal_vectors[idx], self.body_forward_vectors[idx])
             elif 1 < idx < 4:  # sides
-                panel = Panel(self.x_len, self.y_width, self.body_normal_vectors[idx])
+                panel = Panel(self.x_len, self.y_width, self.body_normal_vectors[idx], self.body_forward_vectors[idx])
             else:  # top and bottom
-                panel = Panel(self.x_len, self.z_width, self.body_normal_vectors[idx])
+                panel = Panel(self.x_len, self.z_width, self.body_normal_vectors[idx], self.body_forward_vectors[idx])
             panel.define_global_nodes(panel_center)
             self.panel_nodes.append(panel.global_nodes)
+        # print(self.panel_nodes)
 
 
     def print_nodes(self):
