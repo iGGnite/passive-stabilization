@@ -33,7 +33,9 @@ class Panel:
         self.width = width
         self.n = normal_vector
         self.f = forward_vector
-        self.global_nodes = np.array
+        self.body_normal_vector = np.array
+        self.body_forward_vector = np.array
+        self.body_nodes = np.array
         ### Panel origin in centre of panel ###
         self.local_nodes = np.array((
             [-self.length/2, self.width/2,  0], # rear left
@@ -45,16 +47,16 @@ class Panel:
         B = np.matrix(np.vstack((self.f, n_cross_f, self.n))).T
         self.initial_forward_vector = np.array([1, 0, 0])
         self.initial_normal_vector = np.array([0, 0, 1])
-        new_normal_vector = B @ self.initial_normal_vector
-        new_forward_vector = B @ self.initial_forward_vector
+        self.body_normal_vector = B @ self.initial_normal_vector
+        self.body_forward_vector = B @ self.initial_forward_vector
         if body:  # Rotate about centre of panel (NOTE: potential flaw if body panels not perpendicular)
             self.local_nodes = (B @ self.local_nodes.T).T
         if not body:  # Rotate around hinge point
             self.local_nodes = self.local_nodes + np.array([-self.length/2, 0, 0]).T
             self.local_nodes = (B @ self.local_nodes.T).T
 
-    def define_global_nodes(self, position_vector: np.array):
-        self.global_nodes = np.array(self.local_nodes + position_vector)
+    def define_body_nodes(self, position_vector: np.array):
+        self.body_nodes = np.array(self.local_nodes + position_vector)
         return
 
 
@@ -70,9 +72,8 @@ class Satellite:
         for idx, panel_angle in enumerate(panel_angles):
             while panel_angle < 0 or panel_angle > 90:
                 ValueError("Panel angle must be between 0 and 90 degrees, but is " + str(panel_angle) + " degrees.")
-                panel_angle = np.deg2rad(input("Provide a new panel angle in degrees:"))
-            else:
-                self.panel_angles[idx] = np.deg2rad(panel_angle)
+                panel_angle = float(input("Provide a new panel angle in degrees:"))
+            self.panel_angles[idx] = np.deg2rad(panel_angle)
         self.com = com
         self.inertia = inertia
         ### COORDINATE SYSTEM STARTS AT TIP OF SPACECRAFT ###
@@ -120,15 +121,15 @@ class Satellite:
                 panel = Panel(self.x_len, self.y_width, self.body_normal_vectors[idx], self.body_forward_vectors[idx])
             else:  # top and bottom
                 panel = Panel(self.x_len, self.z_width, self.body_normal_vectors[idx], self.body_forward_vectors[idx])
-            panel.define_global_nodes(panel_center)
+            panel.define_body_nodes(panel_center)
             self.panels.append(panel)
-            self.panel_nodes.append(panel.global_nodes)
+            self.panel_nodes.append(panel.body_nodes)
         for idx, hinge_location in enumerate(self.panel_hinges):
             panel = Panel(self.panel_length, self.panel_width, self.rear_normal_vectors[idx],
                           self.rear_forward_vectors[idx], body=False)
-            panel.define_global_nodes(hinge_location)
+            panel.define_body_nodes(hinge_location)
             self.panels.append(panel)
-            self.panel_nodes.append(panel.global_nodes)
+            self.panel_nodes.append(panel.body_nodes)
 
     def print_nodes(self):
         for nodes in self.panel_nodes:
