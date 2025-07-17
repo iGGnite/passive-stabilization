@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from shapely.geometry import Polygon
 
 def set_axes_equal(ax):
     """
@@ -59,24 +60,51 @@ class Panel:
         self.body_nodes = np.array(self.local_nodes + position_vector)
         return
 
+    def project_nodes_along_velocity_vector(self, projection_plane: list):
+
+        return
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 class Satellite:
     def __init__(self, x_len: float, y_width: float, z_width: float, panel_length: float, panel_width: float,
-                 panel_angles: np.array, inertia: np.array, com: np.array = np.array([-.5, 0, 0])):
+                 panel_angles: np.array, inertia: np.array):
         self.x_len = x_len
         self.y_width = y_width
         self.z_width = z_width
         self.panel_length = panel_length
         self.panel_width = panel_width
         self.panel_angles = panel_angles.astype(float)
+        self.normal_plane_velocity_vector = list
+        self._velocity_vector_i = np.array([-1, 0, 0])
+        self._C_ib = np.eye(3)
+
+
         for idx, panel_angle in enumerate(panel_angles):
             while panel_angle < 0 or panel_angle > 90:
                 ValueError("Panel angle must be between 0 and 90 degrees, but is " + str(panel_angle) + " degrees.")
                 panel_angle = float(input("Provide a new panel angle in degrees:"))
             self.panel_angles[idx] = np.deg2rad(panel_angle)
-        self.com = com
+        self.com = np.array([-.5, 0, 0])
         self.inertia = inertia
-        ### COORDINATE SYSTEM STARTS AT TIP OF SPACECRAFT ###
+
+        ######## CALCULATE PROJECTION PLANE WITH INCOMING PARTICLE VELOCITY VECTOR ########
+        self.velocity_vector_b = self.C_ib @ self.velocity_vector_i
+        self.calc_velocity_vector_normal_plane_basis()
+
+        ######## CREATION OF BODY PANEL COORDINATES ########
         self.body_panel_centres = [
             np.array([0, 0, 0]), np.array([-self.x_len, 0, 0]),  # front, rear
             np.array([-self.x_len/2, self.y_width/2, 0]), np.array([-self.x_len/2, -self.y_width/2, 0]), # left, right
@@ -92,7 +120,7 @@ class Satellite:
             np.array([0, 1, 0]), np.array([0,  -1, 0]),  # point left, right
             np.array([0, 0, 1]), np.array([0,  0,  -1]),  # point up, down
         ]
-        ### Moveable panel vectors, with ability to determine angle per panel ###
+        ######## CREATION OF REAR PANEL COORDINATES, WITH ABILITY TO DETERMINE ANGLE PER PANEL ########
         #TODO: There is likely room to make this code more succinct
         self.panel_hinges = [
             np.array([-x_len, 0, z_width / 2]),  # up
@@ -131,6 +159,17 @@ class Satellite:
             self.panels.append(panel)
             self.panel_nodes.append(panel.body_nodes)
 
+
+    def calc_velocity_vector_normal_plane_basis(self):
+        velocity_unit_vector_b = self.velocity_vector_b / np.linalg.norm(self.velocity_vector_b)
+        dummy_vector = np.eye(3)[np.argmin(np.abs(velocity_unit_vector_b))]
+        v1 = np.cross(velocity_unit_vector_b, dummy_vector)
+        v1 /= np.linalg.norm(v1)
+        v2 = np.cross(velocity_unit_vector_b, v1)
+        self.normal_plane_velocity_vector = [v1, v2, np.array([0, 0])]
+        return
+
+
     def print_nodes(self):
         for nodes in self.panel_nodes:
             print(nodes)
@@ -142,6 +181,31 @@ class Satellite:
         """
         self.com = np.array([0, 0, 0])
         return
+
+    ###### AUTOMATICALLY RE-CALCULATE THE NORMAL PLANE WHEN THE VELOCITY VECTOR CHANGES #######
+    @property
+    def velocity_vector_i(self):
+        return self._velocity_vector_i
+
+    @velocity_vector_i.setter
+    def velocity_vector_i(self, new_velocity_vector_i):
+        self._velocity_vector_i = new_velocity_vector_i
+        self.velocity_vector_b = self.C_ib @ new_velocity_vector_i
+        self.calc_velocity_vector_normal_plane_basis()
+
+    @property
+    def C_ib(self):
+        return self._C_ib
+
+    @C_ib.setter
+    def C_ib(self, new_C_ib):
+        self._C_ib = new_C_ib
+        self.velocity_vector_b = new_C_ib @ self.velocity_vector_i
+
+
+
+
+
 
 
     def visualise(self, show_vectors: bool = True):
@@ -180,6 +244,7 @@ class Satellite:
         ax.set_box_aspect([1, 1, 1])
         set_axes_equal(ax)
         plt.show()
+
 
 
 
