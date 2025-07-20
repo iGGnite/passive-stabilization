@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from shapely.geometry import Polygon
+from shapely.set_operations import unary_union
+
 
 def set_axes_equal(ax):
     """
@@ -37,6 +39,7 @@ class Panel:
         self.body_normal_vector = np.array
         self.body_forward_vector = np.array
         self.body_nodes = np.array
+        self.polygon = Polygon
         ### Panel origin in centre of panel ###
         self.local_nodes = np.array((
             [-self.length/2, self.width/2,  0], # rear left
@@ -55,24 +58,18 @@ class Panel:
         if not body:  # Rotate around hinge point
             self.local_nodes = self.local_nodes + np.array([-self.length/2, 0, 0]).T
             self.local_nodes = (B @ self.local_nodes.T).T
-
+        # self.projection_plane = list
     def define_body_nodes(self, position_vector: np.array):
         self.body_nodes = np.array(self.local_nodes + position_vector)
         return
 
-    def project_nodes_along_velocity_vector(self, projection_plane: list):
-
-        return
-
-
-
-
-
-
-
-
-
-
+    def projected_polygon(self, projection_plane: list)->Polygon:
+        x = np.dot((self.body_nodes - projection_plane[-1]), projection_plane[0])
+        y = np.dot((self.body_nodes - projection_plane[-1]), projection_plane[1])
+        projected_coords = np.vstack((x,y)).T
+        self.polygon = Polygon(projected_coords)
+        # print(f"area: {self.polygon.area}")
+        return self.polygon
 
 
 
@@ -80,29 +77,30 @@ class Panel:
 
 class Satellite:
     def __init__(self, x_len: float, y_width: float, z_width: float, panel_length: float, panel_width: float,
-                 panel_angles: np.array, inertia: np.array):
+                 rear_panel_angles: np.array, inertia: np.array):
         self.x_len = x_len
         self.y_width = y_width
         self.z_width = z_width
         self.panel_length = panel_length
         self.panel_width = panel_width
-        self.panel_angles = panel_angles.astype(float)
-        self.normal_plane_velocity_vector = list
+        self._panel_angles = rear_panel_angles.astype(float)
         self._velocity_vector_i = np.array([-1, 0, 0])
         self._C_ib = np.eye(3)
+        self.panel_polygons = [None] * 10
+        self.shadow_area = float
+        self.rear_forward_vectors: list[np.ndarray | None] = [None] * 4
+        self.rear_normal_vectors: list[np.ndarray | None] = [None] * 4
+        self.panels: list[Panel | None] = [None] * 10
+        self.panel_nodes = [np.ndarray] * 10
 
-
-        for idx, panel_angle in enumerate(panel_angles):
+        #TODO: may be unnecessarily expensive to run this
+        for idx, panel_angle in enumerate(rear_panel_angles):
             while panel_angle < 0 or panel_angle > 90:
                 ValueError("Panel angle must be between 0 and 90 degrees, but is " + str(panel_angle) + " degrees.")
                 panel_angle = float(input("Provide a new panel angle in degrees:"))
-            self.panel_angles[idx] = np.deg2rad(panel_angle)
+            self._panel_angles[idx] = np.deg2rad(panel_angle)
         self.com = np.array([-.5, 0, 0])
         self.inertia = inertia
-
-        ######## CALCULATE PROJECTION PLANE WITH INCOMING PARTICLE VELOCITY VECTOR ########
-        self.velocity_vector_b = self.C_ib @ self.velocity_vector_i
-        self.calc_velocity_vector_normal_plane_basis()
 
         ######## CREATION OF BODY PANEL COORDINATES ########
         self.body_panel_centres = [
@@ -120,28 +118,13 @@ class Satellite:
             np.array([0, 1, 0]), np.array([0,  -1, 0]),  # point left, right
             np.array([0, 0, 1]), np.array([0,  0,  -1]),  # point up, down
         ]
-        ######## CREATION OF REAR PANEL COORDINATES, WITH ABILITY TO DETERMINE ANGLE PER PANEL ########
-        #TODO: There is likely room to make this code more succinct
         self.panel_hinges = [
             np.array([-x_len, 0, z_width / 2]),  # up
             np.array([-x_len, 0, -z_width / 2]),  # down
             np.array([-x_len, y_width / 2, 0]),  # left
             np.array([-x_len, -y_width / 2, 0]),  # right
         ]
-        self.rear_forward_vectors = [
-            np.array([np.cos(self.panel_angles[0]), 0, -np.sin(self.panel_angles[0])]), # upper rear panel
-            np.array([np.cos(self.panel_angles[1]), 0, np.sin(self.panel_angles[1])]),  # lower rear panel
-            np.array([np.cos(self.panel_angles[2]), -np.sin(self.panel_angles[2]), 0]), # left rear panel
-            np.array([np.cos(self.panel_angles[3]), np.sin(self.panel_angles[3]), 0]),  # right rear panels
-        ]
-        self.rear_normal_vectors = [
-            np.array([np.sin(self.panel_angles[0]), 0, np.cos(self.panel_angles[0])]), # upper rear panel
-            np.array([np.sin(self.panel_angles[1]), 0, -np.cos(self.panel_angles[1])]),  # lower rear panel
-            np.array([np.sin(self.panel_angles[2]), np.cos(self.panel_angles[2]), 0]), # left rear panel
-            np.array([np.sin(self.panel_angles[3]), -np.cos(self.panel_angles[3]), 0]),  # right rear panels
-        ]
-        self.panels = []
-        self.panel_nodes = []
+        #TODO: There is likely room to make this code more succinct
         for idx, panel_center in enumerate(self.body_panel_centres):
             if idx < 2:  # front and back
                 panel = Panel(self.y_width, self.z_width, self.body_normal_vectors[idx], self.body_forward_vectors[idx])
@@ -150,25 +133,56 @@ class Satellite:
             else:  # top and bottom
                 panel = Panel(self.x_len, self.z_width, self.body_normal_vectors[idx], self.body_forward_vectors[idx])
             panel.define_body_nodes(panel_center)
-            self.panels.append(panel)
-            self.panel_nodes.append(panel.body_nodes)
+            self.panels[idx] = panel
+            self.panel_nodes[idx] = panel.body_nodes
+
+        ######## CREATION OF REAR PANEL COORDINATES, WITH ABILITY TO DETERMINE ANGLE PER PANEL ########
+        self.create_rear_panels()
+
+        ######## CALCULATE PROJECTION PLANE WITH INCOMING PARTICLE VELOCITY VECTOR ########
+        self.velocity_vector_b = self.C_ib @ self.velocity_vector_i
+        self.velocity_vector_normal_plane = [np.array([0, 1, 0]), np.array([0, 0, 1]), np.array([0, 0, 0])]
+        self.project_panels()
+
+    def create_rear_panels(self):
+        self.rear_forward_vectors = [
+            np.array([np.cos(self._panel_angles[0]), 0, -np.sin(self._panel_angles[0])]), # upper rear panel
+            np.array([np.cos(self._panel_angles[1]), 0, np.sin(self._panel_angles[1])]),  # lower rear panel
+            np.array([np.cos(self._panel_angles[2]), -np.sin(self._panel_angles[2]), 0]), # left rear panel
+            np.array([np.cos(self._panel_angles[3]), np.sin(self._panel_angles[3]), 0]),  # right rear panel
+        ]
+        self.rear_normal_vectors = [
+            np.array([np.sin(self._panel_angles[0]), 0, np.cos(self._panel_angles[0])]), # upper rear panel
+            np.array([np.sin(self._panel_angles[1]), 0, -np.cos(self._panel_angles[1])]),  # lower rear panel
+            np.array([np.sin(self._panel_angles[2]), np.cos(self._panel_angles[2]), 0]), # left rear panel
+            np.array([np.sin(self._panel_angles[3]), -np.cos(self._panel_angles[3]), 0]),  # right rear panel
+        ]
         for idx, hinge_location in enumerate(self.panel_hinges):
             panel = Panel(self.panel_length, self.panel_width, self.rear_normal_vectors[idx],
                           self.rear_forward_vectors[idx], body=False)
             panel.define_body_nodes(hinge_location)
-            self.panels.append(panel)
-            self.panel_nodes.append(panel.body_nodes)
+            self.panels[6+idx] = panel
+            self.panel_nodes[6+idx] = panel.body_nodes
+        return
 
 
-    def calc_velocity_vector_normal_plane_basis(self):
+    def project_panels(self):
         velocity_unit_vector_b = self.velocity_vector_b / np.linalg.norm(self.velocity_vector_b)
         dummy_vector = np.eye(3)[np.argmin(np.abs(velocity_unit_vector_b))]
+        origin = np.array([0, 0, 0])
         v1 = np.cross(velocity_unit_vector_b, dummy_vector)
         v1 /= np.linalg.norm(v1)
         v2 = np.cross(velocity_unit_vector_b, v1)
-        self.normal_plane_velocity_vector = [v1, v2, np.array([0, 0])]
+        self.velocity_vector_normal_plane = [v1, v2, origin]
+        self.calculate_shadow()
         return
 
+    def calculate_shadow(self):
+        self.panel_polygons = []
+        for panel in self.panels:
+            self.panel_polygons.append(panel.projected_polygon(self.velocity_vector_normal_plane))
+        # Because the shadow area will matter to determine number of particles encountered
+        self.shadow_area = unary_union(self.panel_polygons).area
 
     def print_nodes(self):
         for nodes in self.panel_nodes:
@@ -182,7 +196,9 @@ class Satellite:
         self.com = np.array([0, 0, 0])
         return
 
+
     ###### AUTOMATICALLY RE-CALCULATE THE NORMAL PLANE WHEN THE VELOCITY VECTOR CHANGES #######
+    #TODO: Under simulation the update may happen twice per timestep, wasting computational resources
     @property
     def velocity_vector_i(self):
         return self._velocity_vector_i
@@ -191,7 +207,7 @@ class Satellite:
     def velocity_vector_i(self, new_velocity_vector_i):
         self._velocity_vector_i = new_velocity_vector_i
         self.velocity_vector_b = self.C_ib @ new_velocity_vector_i
-        self.calc_velocity_vector_normal_plane_basis()
+        self.project_panels()
 
     @property
     def C_ib(self):
@@ -201,13 +217,21 @@ class Satellite:
     def C_ib(self, new_C_ib):
         self._C_ib = new_C_ib
         self.velocity_vector_b = new_C_ib @ self.velocity_vector_i
+        self.project_panels()
+
+    ###### Make panels moveable during the simulation if wanted ######
+    @property
+    def panel_angles(self):
+        return self._panel_angles
+
+    @panel_angles.setter
+    def panel_angles(self, new_panel_angles):
+        self._panel_angles = np.deg2rad(new_panel_angles)
+        self.create_rear_panels()
+        self.calculate_shadow()
 
 
-
-
-
-
-
+    ###### VISUALISE CUBESAT ######
     def visualise(self, show_vectors: bool = True):
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
@@ -244,7 +268,3 @@ class Satellite:
         ax.set_box_aspect([1, 1, 1])
         set_axes_equal(ax)
         plt.show()
-
-
-
-
