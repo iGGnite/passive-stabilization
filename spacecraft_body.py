@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import mapbox_earcut as earcut
 from matplotlib.lines import Line2D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from shapely.geometry import Polygon
@@ -53,6 +54,7 @@ class Panel:
         self.initial_normal_vector = np.array([0, 0, 1])
         self.body_normal_vector = B @ self.initial_normal_vector
         self.body_forward_vector = B @ self.initial_forward_vector
+        self.panel_center = np.ndarray
         if body:  # Rotate about centre of panel (NOTE: potential flaw if body panels not perpendicular)
             self.local_nodes = (B @ self.local_nodes.T).T
         if not body:  # Rotate around hinge point
@@ -61,6 +63,7 @@ class Panel:
         # self.projection_plane = list
     def define_body_nodes(self, position_vector: np.array):
         self.body_nodes = np.array(self.local_nodes + position_vector)
+        self.panel_center = np.mean(self.body_nodes, axis=0)
         return
 
     def projected_polygon(self, projection_plane: list)->Polygon:
@@ -70,8 +73,6 @@ class Panel:
         self.polygon = Polygon(projected_coords)
         # print(f"area: {self.polygon.area}")
         return self.polygon
-
-
 
 
 
@@ -87,9 +88,10 @@ class Satellite:
         self._velocity_vector_i = np.array([-1, 0, 0])
         self._C_ib = np.eye(3)
         self.panel_polygons = [None] * 10
-        self.shadow_area = float
-        self.rear_forward_vectors: list[np.ndarray | None] = [None] * 4
-        self.rear_normal_vectors: list[np.ndarray | None] = [None] * 4
+        self.shadow: Polygon = None # type: ignore
+        self.shadow_triangle_coords = None
+        self.rear_forward_vectors: list[np.ndarray | None] = [None] * 4 # type: ignore
+        self.rear_normal_vectors: list[np.ndarray | None] = [None] * 4  # type: ignore
         self.panels: list[Panel | None] = [None] * 10
         self.panel_nodes = [np.ndarray] * 10
 
@@ -134,7 +136,7 @@ class Satellite:
                 panel = Panel(self.x_len, self.z_width, self.body_normal_vectors[idx], self.body_forward_vectors[idx])
             panel.define_body_nodes(panel_center)
             self.panels[idx] = panel
-            self.panel_nodes[idx] = panel.body_nodes
+            self.panel_nodes[idx] = panel.body_nodes  # type: ignore
 
         ######## CREATION OF REAR PANEL COORDINATES, WITH ABILITY TO DETERMINE ANGLE PER PANEL ########
         self.create_rear_panels()
@@ -162,7 +164,7 @@ class Satellite:
                           self.rear_forward_vectors[idx], body=False)
             panel.define_body_nodes(hinge_location)
             self.panels[6+idx] = panel
-            self.panel_nodes[6+idx] = panel.body_nodes
+            self.panel_nodes[6+idx] = panel.body_nodes  # type: ignore
         return
 
 
@@ -174,15 +176,16 @@ class Satellite:
         v1 /= np.linalg.norm(v1)
         v2 = np.cross(velocity_unit_vector_b, v1)
         self.velocity_vector_normal_plane = [v1, v2, origin]
-        self.calculate_shadow()
-        return
-
-    def calculate_shadow(self):
         self.panel_polygons = []
         for panel in self.panels:
             self.panel_polygons.append(panel.projected_polygon(self.velocity_vector_normal_plane))
         # Because the shadow area will matter to determine number of particles encountered
-        self.shadow_area = unary_union(self.panel_polygons).area
+        self.shadow = unary_union(self.panel_polygons)
+        vertices = np.array(self.shadow.exterior.coords[:-1], dtype=np.float32)  # type: ignore
+        triangulated = earcut.triangulate_float32(vertices, np.array([len(vertices)], dtype=np.uint32) )
+        self.shadow_triangle_coords = vertices[triangulated.reshape(-1, 3)]
+        return
+
 
     def print_nodes(self):
         for nodes in self.panel_nodes:
