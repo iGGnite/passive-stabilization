@@ -90,6 +90,7 @@ class Satellite:
         self.panel_polygons = [None] * 10
         self.shadow: Polygon = None # type: ignore
         self.shadow_triangle_coords = None
+        self.shadow_triangle_areas = []
         self.rear_forward_vectors: list[np.ndarray | None] = [None] * 4 # type: ignore
         self.rear_normal_vectors: list[np.ndarray | None] = [None] * 4  # type: ignore
         self.panels: list[Panel | None] = [None] * 10
@@ -169,14 +170,16 @@ class Satellite:
 
 
     def project_panels(self):
+        self.shadow_triangle_areas = []
+        self.panel_polygons = []
         velocity_unit_vector_b = self.velocity_vector_b / np.linalg.norm(self.velocity_vector_b)
         dummy_vector = np.eye(3)[np.argmin(np.abs(velocity_unit_vector_b))]
         origin = np.array([0, 0, 0])
         v1 = np.cross(velocity_unit_vector_b, dummy_vector)
         v1 /= np.linalg.norm(v1)
         v2 = np.cross(velocity_unit_vector_b, v1)
+        v2 /= np.linalg.norm(v2)
         self.velocity_vector_normal_plane = [v1, v2, origin]
-        self.panel_polygons = []
         for panel in self.panels:
             self.panel_polygons.append(panel.projected_polygon(self.velocity_vector_normal_plane))
         # Because the shadow area will matter to determine number of particles encountered
@@ -184,8 +187,41 @@ class Satellite:
         vertices = np.array(self.shadow.exterior.coords[:-1], dtype=np.float32)  # type: ignore
         triangulated = earcut.triangulate_float32(vertices, np.array([len(vertices)], dtype=np.uint32) )
         self.shadow_triangle_coords = vertices[triangulated.reshape(-1, 3)]
+        for tri in self.shadow_triangle_coords:
+            self.shadow_triangle_areas.append(0.5*np.abs(np.cross(tri[0,:]-tri[1,:],tri[0,:]-tri[2,:])))
         return
 
+    def get_random_point(self):
+        """
+        Sample a random point uniformly over the current shadow area.
+        Returns a 3D point lying on the velocity-normal plane in the body frame.
+        If the shadow is not available or has zero area, returns None.
+        """
+        # Ensure triangles are available
+        if self.shadow_triangle_coords is None or len(self.shadow_triangle_areas) == 0:
+            return None
+        areas = np.array(self.shadow_triangle_areas, dtype=float)
+        total_area = areas.sum()
+        if total_area <= 0 or np.isnan(total_area):
+            return None
+        # Choose triangle index proportional to area
+        probs = areas / total_area
+        tri_idx = np.random.choice(len(self.shadow_triangle_coords), p=probs)
+        tri = self.shadow_triangle_coords[tri_idx]
+        # Uniform sample inside triangle using barycentric coordinates
+        r1 = np.random.rand()
+        r2 = np.random.rand()
+        sr1 = np.sqrt(r1)
+        u = 1.0 - sr1
+        v = sr1 * (1.0 - r2)
+        w = sr1 * r2
+        point_2d = u * tri[0] + v * tri[1] + w * tri[2]
+        # print(point_2d)
+        # Map 2D plane coordinates back to 3D using the plane basis
+        v1, v2, origin = self.velocity_vector_normal_plane
+        point_3d = origin + point_2d[0] * v1 + point_2d[1] * v2
+        # print(point_3d)
+        return point_2d, point_3d
 
     def print_nodes(self):
         for nodes in self.panel_nodes:
@@ -235,7 +271,7 @@ class Satellite:
 
 
     ###### VISUALISE CUBESAT ######
-    def visualise(self, show_vectors: bool = True):
+    def visualise(self, show_vectors: bool = True, particle_vectors: np.ndarray = None):
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
 
@@ -263,11 +299,14 @@ class Satellite:
             legend_elements = [ Line2D([0], [0], color='b', lw=2, label='Normal vector'),
                                 Line2D([0], [0], color='g', lw=2, label='Forward vector')]
             ax.legend(handles=legend_elements, loc="best")
-
+        if particle_vectors is not None:
+            for vector in particle_vectors:
+                x, y, z = self.velocity_vector_b/np.linalg.norm(self.velocity_vector_b)
+                ax.quiver(vector[0]-x, vector[1]-y, vector[2]-z, x, y, z, )
         ax.set_xlabel('Length (x)')
         ax.set_ylabel('Width (y)')
         ax.set_zlabel('Height (z)')
         plt.title("Satellite configuration")
         ax.set_box_aspect([1, 1, 1])
         set_axes_equal(ax)
-        plt.show()
+        # plt.show()
