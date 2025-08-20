@@ -229,14 +229,15 @@ class Satellite:
             # print(edges)
             u = p - array1
             # print(u)
-            cross = np.cross(u, array1)
+            cross = np.cross(edges, u)
             # print(cross)
-            dir = np.dot(cross, n)
-            if np.all(dir > 0):
+            direction = np.dot(cross, n)
+            print(direction)
+            if np.all(direction > 0):
                 impacts.append(p)
             distance[idx] = d
             #TODO: Investigate results of within-panel-hit
-        # print(distance)
+        print(distance)
         return impacts
 
     def print_nodes(self):
@@ -287,8 +288,9 @@ class Satellite:
 
 
     ###### VISUALISE CUBESAT ######
-    def visualise(self, show_vectors: bool = False,
-                  particle_vectors: np.ndarray = None, impacts: np.ndarray = None):
+    def visualise(self, show_vectors: bool = False, highlight_nodes: bool = False,
+                  particle_vectors: list[np.ndarray] = None, impacts: np.ndarray = None,
+                  show_shadow_axis_system: bool = False):
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
 
@@ -296,10 +298,11 @@ class Satellite:
             verts = [panel]
             panel_collection = Poly3DCollection(
                 verts, facecolors='skyblue', edgecolors='k',
-                linewidths=1, alpha=0.3
+                linewidths=0.8, alpha=0.3
             )
             ax.add_collection3d(panel_collection)
-            ax.scatter(panel[:, 0], panel[:, 1], panel[:, 2], color='r')
+            if highlight_nodes:
+               ax.scatter(panel[:, 0], panel[:, 1], panel[:, 2], color='r')
 
         if show_vectors:
             for panel, nodes in zip(self.panels, self.panel_nodes):
@@ -324,7 +327,7 @@ class Satellite:
             for point in impacts:
                 ax.scatter(point[0], point[1], point[2],marker='x')
 
-        if self.shadow_projection_axis_system is not None:
+        if show_shadow_axis_system:
             x_vec, y_vec, z_vec, origin = self.shadow_projection_axis_system
             axis_length = 0.5  # scale for visibility
 
