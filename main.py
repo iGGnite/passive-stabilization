@@ -1,18 +1,23 @@
-import matplotlib.pyplot as plt
 import mapbox_earcut as earcut
 import pointpats
 from spacecraft_body import *
 from time import time
 from collisions import *
 from shapely import plotting
+import matplotlib
+import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon as MplPolygon
+matplotlib.use('Qt5Agg')
 
 if __name__ == "__main__":
-    np.random.seed(1)
+    # np.random.seed(12)
     satellite = Satellite(1, .5, .5, 1, .5,
-                          np.array([30, 30, 30, 30]), None)
+                          np.array([60, 60, 60, 60]), None)
     # satellite.
-    satellite.velocity_vector_i = np.array([-6, -3, 2])
+    print()
+    satellite.velocity_vector_i = np.array([-6, 3, 12])
+    _, p3d = satellite.get_random_point()
+    impacts = satellite.get_distance_to_planes(p3d,satellite.velocity_vector_b)
     random_2d_points = []
     random_3d_points = []
     for k in range(4):
@@ -26,7 +31,7 @@ if __name__ == "__main__":
         ax.add_patch(patch)
     for point in random_2d_points:
         ax.scatter(point[0], point[1], color='red')
-    basis = satellite.velocity_vector_normal_plane
+    basis = satellite.shadow_projection_axis_system
     x1 = np.dot(satellite.body_forward_vectors[0], basis[0])
     y1 = np.dot(satellite.body_forward_vectors[1], basis[1])
 

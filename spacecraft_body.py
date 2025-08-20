@@ -27,11 +27,6 @@ def set_axes_equal(ax):
 
 class Panel:
     def __init__(self, length: float, width: float, normal_vector: np.array, forward_vector: np.array, body: bool = True):
-        A_inv = np.matrix(
-            [[1, 0, 0],
-             [0, 1, 0],
-             [0, 0, 1]]
-        )
         self.body = body
         self.length = length
         self.width = width
@@ -49,7 +44,7 @@ class Panel:
             [ self.length/2, self.width/2,  0], # front left
         ))
         n_cross_f = np.cross(self.n, self.f)
-        B = np.matrix(np.vstack((self.f, n_cross_f, self.n))).T
+        B = np.array(np.vstack((self.f, n_cross_f, self.n))).T
         self.initial_forward_vector = np.array([1, 0, 0])
         self.initial_normal_vector = np.array([0, 0, 1])
         self.body_normal_vector = B @ self.initial_normal_vector
@@ -61,7 +56,7 @@ class Panel:
             self.local_nodes = self.local_nodes + np.array([-self.length/2, 0, 0]).T
             self.local_nodes = (B @ self.local_nodes.T).T
         # self.projection_plane = list
-    def define_body_nodes(self, position_vector: np.array):
+    def define_body_nodes(self, position_vector: np.ndarray):
         self.body_nodes = np.array(self.local_nodes + position_vector)
         self.panel_center = np.mean(self.body_nodes, axis=0)
         return
@@ -78,19 +73,19 @@ class Panel:
 
 class Satellite:
     def __init__(self, x_len: float, y_width: float, z_width: float, panel_length: float, panel_width: float,
-                 rear_panel_angles: np.array, inertia: np.array):
+                 rear_panel_angles: np.ndarray, inertia: np.ndarray):
         self.x_len = x_len
         self.y_width = y_width
         self.z_width = z_width
         self.panel_length = panel_length
         self.panel_width = panel_width
         self._panel_angles = rear_panel_angles.astype(float)
-        self._velocity_vector_i = np.array([-1, 0, 0])
-        self._C_ib = np.eye(3)
+        self._velocity_vector_i = np.array([-1, 0, 0])  # Velocity vector of the incoming airflow in the inertial frame
+        self._C_ib = np.eye(3)  # Velocity vector of the incoming airflow in the body frame
         self.panel_polygons = [None] * 10
         self.shadow: Polygon = None # type: ignore
         self.shadow_triangle_coords = None
-        self.shadow_triangle_areas = []
+        self.shadow_triangle_areas: np.ndarray = np.array
         self.rear_forward_vectors: list[np.ndarray | None] = [None] * 4 # type: ignore
         self.rear_normal_vectors: list[np.ndarray | None] = [None] * 4  # type: ignore
         self.panels: list[Panel | None] = [None] * 10
@@ -144,7 +139,7 @@ class Satellite:
 
         ######## CALCULATE PROJECTION PLANE WITH INCOMING PARTICLE VELOCITY VECTOR ########
         self.velocity_vector_b = self.C_ib @ self.velocity_vector_i
-        self.velocity_vector_normal_plane = [np.array([0, 1, 0]), np.array([0, 0, 1]), np.array([0, 0, 0])]
+        self.shadow_projection_axis_system = [np.array([0, 1, 0]), np.array([0, 0, 1]), np.array([0, 0, 0])]
         self.project_panels()
 
     def create_rear_panels(self):
@@ -173,39 +168,29 @@ class Satellite:
         self.shadow_triangle_areas = []
         self.panel_polygons = []
         velocity_unit_vector_b = self.velocity_vector_b / np.linalg.norm(self.velocity_vector_b)
-        dummy_vector = np.eye(3)[np.argmin(np.abs(velocity_unit_vector_b))]
+        dummy_vector = np.eye(3)[np.argmin(np.abs(velocity_unit_vector_b))]  # help construct projection plane
         origin = np.array([0, 0, 0])
-        v1 = np.cross(velocity_unit_vector_b, dummy_vector)
-        v1 /= np.linalg.norm(v1)
-        v2 = np.cross(velocity_unit_vector_b, v1)
-        v2 /= np.linalg.norm(v2)
-        self.velocity_vector_normal_plane = [v1, v2, origin]
+        x = np.cross(velocity_unit_vector_b, dummy_vector)
+        x /= np.linalg.norm(x)
+        y = np.cross(velocity_unit_vector_b,x)  # Crucial order to have a right-handed coordinate system!
+        y /= np.linalg.norm(y)
+        self.shadow_projection_axis_system = [x, y, velocity_unit_vector_b, origin] # x, y, z + origin
         for panel in self.panels:
-            self.panel_polygons.append(panel.projected_polygon(self.velocity_vector_normal_plane))
+            self.panel_polygons.append(panel.projected_polygon(self.shadow_projection_axis_system))
         # Because the shadow area will matter to determine number of particles encountered
         self.shadow = unary_union(self.panel_polygons)
         vertices = np.array(self.shadow.exterior.coords[:-1], dtype=np.float32)  # type: ignore
         triangulated = earcut.triangulate_float32(vertices, np.array([len(vertices)], dtype=np.uint32) )
         self.shadow_triangle_coords = vertices[triangulated.reshape(-1, 3)]
-        for tri in self.shadow_triangle_coords:
-            self.shadow_triangle_areas.append(0.5*np.abs(np.cross(tri[0,:]-tri[1,:],tri[0,:]-tri[2,:])))
+        self.shadow_triangle_areas = np.zeros(self.shadow_triangle_coords.shape[0])
+        for idx, tri in enumerate(self.shadow_triangle_coords):
+            self.shadow_triangle_areas[idx] = 0.5*np.abs(np.cross(tri[0,:]-tri[1,:],tri[0,:]-tri[2,:]))
         return
 
     def get_random_point(self):
-        """
-        Sample a random point uniformly over the current shadow area.
-        Returns a 3D point lying on the velocity-normal plane in the body frame.
-        If the shadow is not available or has zero area, returns None.
-        """
-        # Ensure triangles are available
-        if self.shadow_triangle_coords is None or len(self.shadow_triangle_areas) == 0:
-            return None
-        areas = np.array(self.shadow_triangle_areas, dtype=float)
-        total_area = areas.sum()
-        if total_area <= 0 or np.isnan(total_area):
-            return None
-        # Choose triangle index proportional to area
-        probs = areas / total_area
+        total_area = np.sum(self.shadow_triangle_areas)
+        probs = self.shadow_triangle_areas / total_area
+        # Choose a random triangle
         tri_idx = np.random.choice(len(self.shadow_triangle_coords), p=probs)
         tri = self.shadow_triangle_coords[tri_idx]
         # Uniform sample inside triangle using barycentric coordinates
@@ -215,13 +200,44 @@ class Satellite:
         u = 1.0 - sr1
         v = sr1 * (1.0 - r2)
         w = sr1 * r2
-        point_2d = u * tri[0] + v * tri[1] + w * tri[2]
+        point_2d = u * tri[0] + v * tri[1] + w * tri[2]  # random 2D point on the projected plane
         # print(point_2d)
         # Map 2D plane coordinates back to 3D using the plane basis
-        v1, v2, origin = self.velocity_vector_normal_plane
-        point_3d = origin + point_2d[0] * v1 + point_2d[1] * v2
+        x, y, z, origin = self.shadow_projection_axis_system
+        # normal_plane_vector = -self.
+        point_3d = origin + point_2d[0] * x + point_2d[1] * y
         # print(point_3d)
         return point_2d, point_3d
+
+    def get_distance_to_planes(self, particle_location: np.ndarray, particle_velocity_vector: np.ndarray):
+        """https://en.wikipedia.org/wiki/Line%E2%80%93plane_intersection"""
+        l = (particle_velocity_vector / np.linalg.norm(particle_velocity_vector)).flatten()
+        l0 = np.squeeze(particle_location)
+        distance = 10 * [None]
+        impacts = []
+        #TODO: Note that we should automatically exclude all panels which does not have a component of the outward normal pointing to the particle
+        #TODO: Adjust code to exclude panels to which we are exactly parallel
+        for idx, panel in enumerate(self.panels):
+            p0 = np.squeeze(panel.panel_center)
+            n = panel.body_normal_vector.reshape(-1)
+            d = np.dot((p0-l0),n)/np.dot(l,n)
+            p = l0 + l*d  # point of intersection with the infinite plane
+            array1 = panel.body_nodes
+            array2 = np.vstack((panel.body_nodes[1:,:], panel.body_nodes[0,:]))
+            # if idx == 0:
+            edges = array2 - array1
+            # print(edges)
+            u = p - array1
+            # print(u)
+            cross = np.cross(u, array1)
+            # print(cross)
+            dir = np.dot(cross, n)
+            if np.all(dir > 0):
+                impacts.append(p)
+            distance[idx] = d
+            #TODO: Investigate results of within-panel-hit
+        # print(distance)
+        return impacts
 
     def print_nodes(self):
         for nodes in self.panel_nodes:
@@ -267,11 +283,12 @@ class Satellite:
     def panel_angles(self, new_panel_angles):
         self._panel_angles = np.deg2rad(new_panel_angles)
         self.create_rear_panels()
-        self.calculate_shadow()
+        self.project_panels()
 
 
     ###### VISUALISE CUBESAT ######
-    def visualise(self, show_vectors: bool = True, particle_vectors: np.ndarray = None):
+    def visualise(self, show_vectors: bool = False,
+                  particle_vectors: np.ndarray = None, impacts: np.ndarray = None):
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
 
@@ -279,7 +296,7 @@ class Satellite:
             verts = [panel]
             panel_collection = Poly3DCollection(
                 verts, facecolors='skyblue', edgecolors='k',
-                linewidths=1, alpha=0.8
+                linewidths=1, alpha=0.3
             )
             ax.add_collection3d(panel_collection)
             ax.scatter(panel[:, 0], panel[:, 1], panel[:, 2], color='r')
@@ -303,6 +320,18 @@ class Satellite:
             for vector in particle_vectors:
                 x, y, z = self.velocity_vector_b/np.linalg.norm(self.velocity_vector_b)
                 ax.quiver(vector[0]-x, vector[1]-y, vector[2]-z, x, y, z, )
+        if impacts is not None:
+            for point in impacts:
+                ax.scatter(point[0], point[1], point[2],marker='x')
+
+        if self.shadow_projection_axis_system is not None:
+            x_vec, y_vec, z_vec, origin = self.shadow_projection_axis_system
+            axis_length = 0.5  # scale for visibility
+
+            ax.quiver(*origin, *(x_vec * axis_length), color='darkred', arrow_length_ratio=0.2, linewidth=2)
+            ax.quiver(*origin, *(y_vec * axis_length), color='darkgreen', arrow_length_ratio=0.2, linewidth=2)
+            ax.quiver(*origin, *(z_vec * axis_length), color='darkblue', arrow_length_ratio=0.2, linewidth=2)
+
         ax.set_xlabel('Length (x)')
         ax.set_ylabel('Width (y)')
         ax.set_zlabel('Height (z)')
