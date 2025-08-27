@@ -72,13 +72,17 @@ class Panel:
 
 
 class Satellite:
-    def __init__(self, x_len: float, y_width: float, z_width: float, panel_length: float, panel_width: float,
-                 rear_panel_angles: np.ndarray, inertia: np.ndarray):
+    def __init__(self, x_len: float, y_width: float, z_width: float, rear_panel_angles: np.ndarray,
+                 panel_length: float = None, panel_width: float = None, inertia: np.ndarray = np.eye(3)):
         self.x_len = x_len
         self.y_width = y_width
         self.z_width = z_width
         self.panel_length = panel_length
         self.panel_width = panel_width
+        if self.panel_length is None:
+            self.panel_length = self.x_len
+        if self.panel_width is None:
+            self.panel_width = max(self.y_width, self.z_width)
         self._panel_angles = rear_panel_angles.astype(float)
         self._velocity_vector_i = np.array([-1, 0, 0])  # Velocity vector of the incoming airflow in the inertial frame
         self._C_ib = np.eye(3)  # Velocity vector of the incoming airflow in the body frame
@@ -90,6 +94,7 @@ class Satellite:
         self.rear_normal_vectors: list[np.ndarray | None] = [None] * 4  # type: ignore
         self.panels: list[Panel | None] = [None] * 10
         self.panel_nodes = [np.ndarray] * 10
+        self.shaded_area: float = 0
 
         #TODO: may be unnecessarily expensive to run this
         for idx, panel_angle in enumerate(rear_panel_angles):
@@ -185,11 +190,25 @@ class Satellite:
         self.shadow_triangle_areas = np.zeros(self.shadow_triangle_coords.shape[0])
         for idx, tri in enumerate(self.shadow_triangle_coords):
             self.shadow_triangle_areas[idx] = 0.5*np.abs(np.cross(tri[0,:]-tri[1,:],tri[0,:]-tri[2,:]))
+        self.shaded_area = np.sum(self.shadow_triangle_areas)
         return
 
-    def get_random_point(self):
-        total_area = np.sum(self.shadow_triangle_areas)
-        probs = self.shadow_triangle_areas / total_area
+    def generate_impacting_particle(self, particle_velocity_vector: np.ndarray = None, n_particles: int = 1) -> list[tuple]:
+        """
+        Generate a single particle to impact the spacecraft body. As of 27/08/2025 not yet vectorised so that I can get
+        a working model fast, will need to be called multiple times.
+        :param particle_velocity_vector:
+            :type particle_velocity_vector: np.ndarray
+        :param n_particles: (Currently not working) number of particles to generate at once
+            :type n_particles: int
+        :return: A list of tuples (for later vectorisation).
+        - Entry 0 specifies index of impacted panel.
+        - Entry 1 specifies coordinates of impact location.
+        - Entry 2 specifies distance from satellite 2d projection onto plane normal to velocity vector.
+            :rtype: list[tuple]
+        """
+        impacts = []
+        probs = self.shadow_triangle_areas / self.shaded_area
         # Choose a random triangle
         tri_idx = np.random.choice(len(self.shadow_triangle_coords), p=probs)
         tri = self.shadow_triangle_coords[tri_idx]
@@ -201,44 +220,45 @@ class Satellite:
         v = sr1 * (1.0 - r2)
         w = sr1 * r2
         point_2d = u * tri[0] + v * tri[1] + w * tri[2]  # random 2D point on the projected plane
-        # print(point_2d)
-        # Map 2D plane coordinates back to 3D using the plane basis
-        x, y, z, origin = self.shadow_projection_axis_system
-        # normal_plane_vector = -self.
-        point_3d = origin + point_2d[0] * x + point_2d[1] * y
-        # print(point_3d)
-        return point_2d, point_3d
 
-    def get_distance_to_planes(self, particle_location: np.ndarray, particle_velocity_vector: np.ndarray):
+        ######## Map 2D plane coordinates back to 3D using the plane basis ########
+        x, y, z, origin = self.shadow_projection_axis_system
+        point_3d = origin + point_2d[0] * x + point_2d[1] * y
+
+        ## FIND IMPACTOR POINT ON SPACECRAFT BODY ##
         """https://en.wikipedia.org/wiki/Line%E2%80%93plane_intersection"""
+        if particle_velocity_vector is None:
+            particle_velocity_vector = self.velocity_vector_b
         l = (particle_velocity_vector / np.linalg.norm(particle_velocity_vector)).flatten()
-        l0 = np.squeeze(particle_location)
-        distance = 10 * [None]
-        impacts = []
-        #TODO: Note that we should automatically exclude all panels which does not have a component of the outward normal pointing to the particle
-        #TODO: Adjust code to exclude panels to which we are exactly parallel
+        l0 = np.squeeze(point_3d)
+        impact_candidates = []
+        # TODO: Note that we should automatically exclude all panels which does not have a component of the outward normal pointing to the particle
+        # TODO: Adjust code to exclude panels to which we are exactly parallel
         for idx, panel in enumerate(self.panels):
-            p0 = np.squeeze(panel.panel_center)
-            n = panel.body_normal_vector.reshape(-1)
-            d = np.dot((p0-l0),n)/np.dot(l,n)
-            p = l0 + l*d  # point of intersection with the infinite plane
-            array1 = panel.body_nodes
-            array2 = np.vstack((panel.body_nodes[1:,:], panel.body_nodes[0,:]))
-            # if idx == 0:
-            edges = array2 - array1
-            # print(edges)
-            u = p - array1
-            # print(u)
-            cross = np.cross(edges, u)
-            # print(cross)
-            direction = np.dot(cross, n)
-            print(direction)
-            if np.all(direction > 0):
-                impacts.append(p)
-            distance[idx] = d
-            #TODO: Investigate results of within-panel-hit
-        print(distance)
+            dot = np.dot(panel.body_normal_vector, self.velocity_vector_b)
+            if dot < 0:  # if negative, panel faces the 'wind' and is eligible for evaluation
+                p0 = np.squeeze(panel.panel_center)
+                n = panel.body_normal_vector.reshape(-1)
+                d = np.dot((p0 - l0), n) / np.dot(l, n)
+                p = l0 + l * d  # point of intersection with the infinite plane
+                array1 = panel.body_nodes
+                array2 = np.vstack((panel.body_nodes[1:, :], panel.body_nodes[0, :]))
+                edges = array2 - array1
+                u = p - array1
+                cross = np.cross(edges, u)
+                direction = np.dot(cross, n)
+                if np.all(direction > 0):  # Check if point lies in plane
+                    impact_candidates.append((idx, p, d))
+        # print(f"impact_candidates: {impact_candidates}")
+        impact = None
+        for point in impact_candidates:
+            if impact is None:
+                impact = point
+            elif point[2] < impact[2]:  # If the impact occurs earlier along the direction of travel select it
+                impact = point
+        impacts.append(impact)
         return impacts
+
 
     def print_nodes(self):
         for nodes in self.panel_nodes:
@@ -288,23 +308,36 @@ class Satellite:
 
 
     ###### VISUALISE CUBESAT ######
-    def visualise(self, show_vectors: bool = False, highlight_nodes: bool = False,
-                  particle_vectors: list[np.ndarray] = None, impacts: np.ndarray = None,
-                  show_shadow_axis_system: bool = False):
+    def visualise(self,
+                  show_velocity_vector: bool = False,
+                  show_panel_vectors: bool = False,
+                  show_shadow_axis_system: bool = False,
+                  highlight_nodes: bool = False,
+                  impacts: np.ndarray = None,
+                  particle_vectors: list[np.ndarray] = None):
+        """
+        :param show_velocity_vector:
+        :param show_panel_vectors:
+        :param highlight_nodes:
+        :param impacts:
+        :param particle_vectors:
+        :param show_shadow_axis_system:
+        :return:
+        """
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
-
-        for panel in self.panel_nodes:
-            verts = [panel]
-            panel_collection = Poly3DCollection(
-                verts, facecolors='skyblue', edgecolors='k',
-                linewidths=0.8, alpha=0.3
-            )
+        for panel in self.panel_nodes: # Draw the panels which make up the cubesat
+            vertices = [panel]
+            panel_collection = Poly3DCollection(vertices, facecolors='skyblue', edgecolors='k', linewidths=.5, alpha=0.3)
             ax.add_collection3d(panel_collection)
             if highlight_nodes:
                ax.scatter(panel[:, 0], panel[:, 1], panel[:, 2], color='r')
 
-        if show_vectors:
+        if show_velocity_vector:
+            vel_vec = self.velocity_vector_b / np.linalg.norm(self.velocity_vector_b)
+            ax.quiver(0-vel_vec[0], 0-vel_vec[1], 0-vel_vec[2], vel_vec[0], vel_vec[1], vel_vec[2])
+
+        if show_panel_vectors:
             for panel, nodes in zip(self.panels, self.panel_nodes):
                 center = nodes.mean(axis=0)
                 n_vec = panel.n / np.linalg.norm(panel.n) * 0.3
@@ -315,22 +348,27 @@ class Satellite:
                 ax.quiver(center[0], center[1], center[2],
                           f_vec[0], f_vec[1], f_vec[2],
                           color='g', arrow_length_ratio=0.2, linewidth=2)
-
-            legend_elements = [ Line2D([0], [0], color='b', lw=2, label='Normal vector'),
-                                Line2D([0], [0], color='g', lw=2, label='Forward vector')]
+            legend_elements = [ Line2D([0], [0], color='b', lw=2, label='Panel normal vector'),
+                                Line2D([0], [0], color='g', lw=2, label='Panel forward vector')]
             ax.legend(handles=legend_elements, loc="best")
-        if particle_vectors is not None:
-            for vector in particle_vectors:
-                x, y, z = self.velocity_vector_b/np.linalg.norm(self.velocity_vector_b)
-                ax.quiver(vector[0]-x, vector[1]-y, vector[2]-z, x, y, z, )
-        if impacts is not None:
-            for point in impacts:
-                ax.scatter(point[0], point[1], point[2],marker='x')
 
-        if show_shadow_axis_system:
+        if particle_vectors is not None and impacts is not None:
+            if len(particle_vectors) != len(impacts):
+                raise ValueError("Number of specified impacts and particle vectors must match")
+        if impacts is not None:  # Plot the impact locations of particles with an arrow indicating the particle direction
+            vec_x_dir, vec_y_dir, vec_z_dir = self.velocity_vector_b / np.linalg.norm(self.velocity_vector_b)
+            for idx in range(impacts.shape[0]):
+                impact_coords = impacts[idx,:]  #TODO: VECTORIZE
+                ax.scatter(impact_coords[0], impact_coords[1], impact_coords[2], marker='x', color='r')
+                if particle_vectors is not None:  # If the particles have a specified direction, overwrite
+                    particle_vector = particle_vectors[idx]
+                    vec_x_dir, vec_y_dir, vec_z_dir = particle_vector/np.linalg.norm(particle_vector)
+                ax.quiver(impact_coords[0] - vec_x_dir, impact_coords[1] - vec_y_dir, impact_coords[2] - vec_z_dir,
+                          vec_x_dir, vec_y_dir, vec_z_dir)
+
+        if show_shadow_axis_system:  # Visualise the axis system basis generated for the 2D satellite shadow
             x_vec, y_vec, z_vec, origin = self.shadow_projection_axis_system
             axis_length = 0.5  # scale for visibility
-
             ax.quiver(*origin, *(x_vec * axis_length), color='darkred', arrow_length_ratio=0.2, linewidth=2)
             ax.quiver(*origin, *(y_vec * axis_length), color='darkgreen', arrow_length_ratio=0.2, linewidth=2)
             ax.quiver(*origin, *(z_vec * axis_length), color='darkblue', arrow_length_ratio=0.2, linewidth=2)
@@ -338,7 +376,10 @@ class Satellite:
         ax.set_xlabel('Length (x)')
         ax.set_ylabel('Width (y)')
         ax.set_zlabel('Height (z)')
+        ax.set_xlim(-(2*self.x_len+.2),0.5)
+        ax.set_ylim(-(self.y_width+.5),(self.y_width+.5))
+        ax.set_zlim(-(self.z_width+.5), (self.z_width+.5))
         plt.title("Satellite configuration")
         ax.set_box_aspect([1, 1, 1])
         set_axes_equal(ax)
-        # plt.show()
+        plt.show()
