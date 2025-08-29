@@ -36,6 +36,7 @@ class Panel:
         self.body_forward_vector = np.array
         self.body_nodes = np.array
         self.polygon = Polygon
+        self.panel_area = self.length * self.width
         ### Panel origin in centre of panel ###
         self.local_nodes = np.array((
             [-self.length/2, self.width/2,  0], # rear left
@@ -72,6 +73,7 @@ class Panel:
 
 
 class Satellite:
+
     def __init__(self, x_len: float, y_width: float, z_width: float, rear_panel_angles: np.ndarray,
                  panel_length: float = None, panel_width: float = None, inertia: np.ndarray = np.eye(3)):
         self.x_len = x_len
@@ -95,6 +97,7 @@ class Satellite:
         self.panels: list[Panel | None] = [None] * 10
         self.panel_nodes = [np.ndarray] * 10
         self.shaded_area: float = 0
+        self.com: np.ndarray = np.zeros(3)
 
         #TODO: may be unnecessarily expensive to run this
         for idx, panel_angle in enumerate(rear_panel_angles):
@@ -102,7 +105,6 @@ class Satellite:
                 ValueError("Panel angle must be between 0 and 90 degrees, but is " + str(panel_angle) + " degrees.")
                 panel_angle = float(input("Provide a new panel angle in degrees:"))
             self._panel_angles[idx] = np.deg2rad(panel_angle)
-        self.com = np.array([-.5, 0, 0])
         self.inertia = inertia
 
         ######## CREATION OF BODY PANEL COORDINATES ########
@@ -166,6 +168,12 @@ class Satellite:
             panel.define_body_nodes(hinge_location)
             self.panels[6+idx] = panel
             self.panel_nodes[6+idx] = panel.body_nodes  # type: ignore
+        centres = np.zeros((10,3))
+        total_surface_area = 0.0
+        for idx, panel in enumerate(self.panels):
+            centres[idx,:] = panel.panel_area*panel.panel_center
+            total_surface_area += panel.panel_area
+        self.com = np.sum(centres, axis=0)/total_surface_area
         return
 
 
@@ -193,7 +201,8 @@ class Satellite:
         self.shaded_area = np.sum(self.shadow_triangle_areas)
         return
 
-    def generate_impacting_particle(self, particle_velocity_vector: np.ndarray = None, n_particles: int = 1) -> list[tuple]:
+    def generate_impacting_particle(self, particle_velocity_vector: np.ndarray = None,
+                                    n_particles: int = 1, method: str = "elastic") -> list[tuple]:
         """
         Generate a single particle to impact the spacecraft body. As of 27/08/2025 not yet vectorised so that I can get
         a working model fast, will need to be called multiple times.
@@ -201,6 +210,8 @@ class Satellite:
             :type particle_velocity_vector: np.ndarray
         :param n_particles: (Currently not working) number of particles to generate at once
             :type n_particles: int
+        :param method: Type of momentum exchange between particle and panel
+        - "elastic" represents an elastic collision, where no kinetic energy is lost
         :return: A list of tuples (for later vectorisation).
         - Entry 0 specifies index of impacted panel.
         - Entry 1 specifies coordinates of impact location.
@@ -232,8 +243,8 @@ class Satellite:
         l = (particle_velocity_vector / np.linalg.norm(particle_velocity_vector)).flatten()
         l0 = np.squeeze(point_3d)
         impact_candidates = []
-        # TODO: Note that we should automatically exclude all panels which does not have a component of the outward normal pointing to the particle
-        # TODO: Adjust code to exclude panels to which we are exactly parallel
+
+        # We exclude panels which do not even face the particle
         for idx, panel in enumerate(self.panels):
             dot = np.dot(panel.body_normal_vector, self.velocity_vector_b)
             if dot < 0:  # if negative, panel faces the 'wind' and is eligible for evaluation
@@ -256,6 +267,14 @@ class Satellite:
                 impact = point
             elif point[2] < impact[2]:  # If the impact occurs earlier along the direction of travel select it
                 impact = point
+        # if method == "elastic":
+        #     impacted_panel = self.panels[impact[0]]
+        #     impacted_panel_normal = impacted_panel.body_normal_vector
+        #     particle_momentum = particle_velocity_vector *
+        #     momentum_normal_to_panel =
+        #     print(impacted_panel_normal)
+        # elif method == "inelastic":
+        #     ...
         impacts.append(impact)
         return impacts
 
