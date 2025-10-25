@@ -56,6 +56,7 @@ class Panel:
         if not body:  # Rotate around hinge point
             self.local_nodes = self.local_nodes + np.array([-self.length/2, 0, 0]).T
             self.local_nodes = (B @ self.local_nodes.T).T
+
         # self.projection_plane = list
     def define_body_nodes(self, position_vector: np.ndarray):
         self.body_nodes = np.array(self.local_nodes + position_vector)
@@ -86,8 +87,10 @@ class Satellite:
         if self.panel_width is None:
             self.panel_width = max(self.y_width, self.z_width)
         self._panel_angles = rear_panel_angles.astype(float)
-        self._velocity_vector_i = np.array([-1, 0, 0])  # Velocity vector of the incoming airflow in the inertial frame
-        self._C_ib = np.eye(3)  # Velocity vector of the incoming airflow in the body frame
+        self.velocity = 1 # Dummy value
+        # self._velocity_vector_i = np.array([-1, 0, 0])  # Velocity vector of the incoming airflow in the inertial frame
+        # self._C_ib = np.eye(3)  #
+        self._aero_body_CTM = np.eye(3) # Body orientation, to be updated externally
         self.panel_polygons = [None] * 10
         self.shadow: Polygon = None # type: ignore
         self.shadow_triangle_coords = None
@@ -145,7 +148,7 @@ class Satellite:
         self.create_rear_panels()
 
         ######## CALCULATE PROJECTION PLANE WITH INCOMING PARTICLE VELOCITY VECTOR ########
-        self.velocity_vector_b = self.C_ib @ self.velocity_vector_i
+        self.particle_velocity_vector_b = self._aero_body_CTM @ np.array([-self.velocity, 0, 0])
         self.shadow_projection_axis_system = [np.array([0, 1, 0]), np.array([0, 0, 1]), np.array([0, 0, 0])]
         self.project_panels()
 
@@ -180,7 +183,7 @@ class Satellite:
     def project_panels(self):
         self.shadow_triangle_areas = []
         self.panel_polygons = []
-        velocity_unit_vector_b = self.velocity_vector_b / np.linalg.norm(self.velocity_vector_b)
+        velocity_unit_vector_b = self.particle_velocity_vector_b / np.linalg.norm(self.particle_velocity_vector_b)
         dummy_vector = np.eye(3)[np.argmin(np.abs(velocity_unit_vector_b))]  # help construct projection plane
         origin = np.array([0, 0, 0])
         x = np.cross(velocity_unit_vector_b, dummy_vector)
@@ -188,12 +191,13 @@ class Satellite:
         y = np.cross(velocity_unit_vector_b,x)  # Crucial order to have a right-handed coordinate system!
         y /= np.linalg.norm(y)
         self.shadow_projection_axis_system = [x, y, velocity_unit_vector_b, origin] # x, y, z + origin
+        # print(f"shadow projection axis system: {self.shadow_projection_axis_system}")
         for panel in self.panels:
             self.panel_polygons.append(panel.projected_polygon(self.shadow_projection_axis_system))
         # Because the shadow area will matter to determine number of particles encountered
         self.shadow = unary_union(self.panel_polygons)
         vertices = np.array(self.shadow.exterior.coords[:-1], dtype=np.float32)  # type: ignore
-        triangulated = earcut.triangulate_float32(vertices, np.array([len(vertices)], dtype=np.uint32) )
+        triangulated = earcut.triangulate_float32(vertices, np.array([len(vertices)], dtype=np.uint32))
         self.shadow_triangle_coords = vertices[triangulated.reshape(-1, 3)]
         self.shadow_triangle_areas = np.zeros(self.shadow_triangle_coords.shape[0])
         for idx, tri in enumerate(self.shadow_triangle_coords):
@@ -201,13 +205,13 @@ class Satellite:
         self.shaded_area = np.sum(self.shadow_triangle_areas)
         return
 
-    def generate_impacting_particle(self, particle_velocity_vector: np.ndarray = None,
-                                    n_particles: int = 1, method: str = "elastic") -> list[tuple]:
+    def generate_impacting_particle(self, particle_velocity_vectors: np.ndarray = None,
+                                    n_particles: int = 1, method: str = "elastic") -> list[np.ndarray]:
         """
         Generate a single particle to impact the spacecraft body. As of 27/08/2025 not yet vectorised so that I can get
         a working model fast, will need to be called multiple times.
-        :param particle_velocity_vector:
-            :type particle_velocity_vector: np.ndarray
+        :param particle_velocity_vectors:
+            :type particle_velocity_vectors: np.ndarray
         :param n_particles: (Currently not working) number of particles to generate at once
             :type n_particles: int
         :param method: Type of momentum exchange between particle and panel
@@ -218,65 +222,64 @@ class Satellite:
         - Entry 2 specifies distance from satellite 2d projection onto plane normal to velocity vector.
             :rtype: list[tuple]
         """
-        impacts = []
+        # Preallocate 3d impact points and impact registry array
+        impact_points = np.zeros((10, n_particles, 3))
+        impact_array = np.zeros((n_particles, 10), dtype=int)
+
+
         probs = self.shadow_triangle_areas / self.shaded_area
         # Choose a random triangle
-        tri_idx = np.random.choice(len(self.shadow_triangle_coords), p=probs)
+        tri_idx = np.random.choice(len(self.shadow_triangle_coords), n_particles, p=probs)
         tri = self.shadow_triangle_coords[tri_idx]
         # Uniform sample inside triangle using barycentric coordinates
-        r1 = np.random.rand()
-        r2 = np.random.rand()
+        r1 = np.random.rand(n_particles)
+        r2 = np.random.rand(n_particles)
         sr1 = np.sqrt(r1)
         u = 1.0 - sr1
         v = sr1 * (1.0 - r2)
         w = sr1 * r2
-        point_2d = u * tri[0] + v * tri[1] + w * tri[2]  # random 2D point on the projected plane
+        points_2d = u[:, None] * tri[:,0] + v[:, None] * tri[:,1] + w[:, None] * tri[:,2]  # random 2D point on the projected plane
 
         ######## Map 2D plane coordinates back to 3D using the plane basis ########
         x, y, z, origin = self.shadow_projection_axis_system
-        point_3d = origin + point_2d[0] * x + point_2d[1] * y
+        points_3d = (np.tile(origin, (n_particles, 1)) +
+                     (points_2d[:,0])[:,None] * np.tile(x, (n_particles, 1)) +
+                     (points_2d[:,1])[:,None] * np.tile(y, (n_particles, 1)))
 
-        ## FIND IMPACTOR POINT ON SPACECRAFT BODY ##
+        ################## FIND IMPACTOR POINT ON SPACECRAFT BODY ##################
         """https://en.wikipedia.org/wiki/Line%E2%80%93plane_intersection"""
-        if particle_velocity_vector is None:
-            particle_velocity_vector = self.velocity_vector_b
-        l = (particle_velocity_vector / np.linalg.norm(particle_velocity_vector)).flatten()
-        l0 = np.squeeze(point_3d)
-        impact_candidates = []
+        if particle_velocity_vectors is None:  # If particles direction is not specified per particle
+            particle_velocity_vectors = np.tile(self.particle_velocity_vector_b, (n_particles, 1))
+        l = particle_velocity_vectors / np.linalg.norm(particle_velocity_vectors, axis=1)[:,None] # unit vector particle velocity
+        l0 = np.squeeze(points_3d)
+        d = np.full((n_particles, 10), np.nan) #NOTE: Number of panels is hard-coded to be 10
+        for idx, panel in enumerate(self.panels):  # We check per panel where particles cross their infinite plane
+            dot = np.einsum('ij,ij->i', np.tile(panel.body_normal_vector, (n_particles,1)), particle_velocity_vectors)
+            indices_of_particles_facing_this_panel = np.where(dot < 0)[0] # Whether current panel faces incoming particles
+            if len(indices_of_particles_facing_this_panel) > 0:  # If this panel faces any particles at all
+                p0 = np.tile(np.squeeze(panel.panel_center), (len(indices_of_particles_facing_this_panel), 1))
+                n = np.tile(panel.body_normal_vector, (len(indices_of_particles_facing_this_panel), 1))
+                l = l[indices_of_particles_facing_this_panel]
+                l0 = l0[indices_of_particles_facing_this_panel]
+                d[:,idx] = np.einsum('ij,ij->i',(p0 - l0), n) / np.einsum('ij,ij->i',l, n)
+                p = l0 + l * (d[:,idx])[:,None]  # 3D point of intersection with the infinite plane
+                impact_points[idx,indices_of_particles_facing_this_panel,:] = p  # Register that point
 
-        # We exclude panels which do not even face the particle
-        for idx, panel in enumerate(self.panels):
-            dot = np.dot(panel.body_normal_vector, self.velocity_vector_b)
-            if dot < 0:  # if negative, panel faces the 'wind' and is eligible for evaluation
-                p0 = np.squeeze(panel.panel_center)
-                n = panel.body_normal_vector.reshape(-1)
-                d = np.dot((p0 - l0), n) / np.dot(l, n)
-                p = l0 + l * d  # point of intersection with the infinite plane
-                array1 = panel.body_nodes
-                array2 = np.vstack((panel.body_nodes[1:, :], panel.body_nodes[0, :]))
-                edges = array2 - array1
-                u = p - array1
-                cross = np.cross(edges, u)
-                direction = np.dot(cross, n)
-                if np.all(direction > 0):  # Check if point lies in plane
-                    impact_candidates.append((idx, p, d))
-        # print(f"impact_candidates: {impact_candidates}")
-        impact = None
-        for point in impact_candidates:
-            if impact is None:
-                impact = point
-            elif point[2] < impact[2]:  # If the impact occurs earlier along the direction of travel select it
-                impact = point
-        # if method == "elastic":
-        #     impacted_panel = self.panels[impact[0]]
-        #     impacted_panel_normal = impacted_panel.body_normal_vector
-        #     particle_momentum = particle_velocity_vector *
-        #     momentum_normal_to_panel =
-        #     print(impacted_panel_normal)
-        # elif method == "inelastic":
-        #     ...
-        impacts.append(impact)
-        return impacts
+                ############ DETERMINE WHETHER IMPACT ON INFINITE PLANE LIES WITHIN THE EDGES OF THE PANEL ############
+                panel_corners = panel.body_nodes  # 4x3 array of corner nodes of panel
+                panel_corners_shifted_by_one = np.vstack((panel.body_nodes[1:, :], panel.body_nodes[0, :]))  # 4x3 array of corner nodes of panel, moving the first row to the end
+                edge_vectors = panel_corners_shifted_by_one - panel_corners # Vectors defining edges of the panel, pointing in CCW direction (looking at panel contra-normal)
+                node_to_point = p[:, None, :] - panel_corners[None, :, :]  # Vector pointing from panel corner to impact point (VERIFIED working)
+
+                # Check whether cross product of edge vector with node_to_point vector points along or opposite panel normal
+                cross_corner_impact = np.cross(edge_vectors, node_to_point)
+                direction = np.einsum('ijk,ik->ij',cross_corner_impact, n)
+                panel_impact = np.all(direction > 0, axis=1)  # If pointing along normal for each edge, impact IN panel
+                impact_array[:, idx] = panel_impact
+        distances = np.where(impact_array == 1, d, np.inf)  # Distances to panel if impact, else infinity
+        indices_of_impacted_panels = np.argmin(distances, axis=1)  # Determine first panel to be hit by given particle
+        impact_3D_coordinates_constr_frame = impact_points[indices_of_impacted_panels,np.arange(n_particles),:]  # Retrieve impact 3d coordinates per particle
+        return [indices_of_impacted_panels, impact_3D_coordinates_constr_frame, particle_velocity_vectors]
 
 
     def print_nodes(self):
@@ -295,23 +298,13 @@ class Satellite:
     ###### AUTOMATICALLY RE-CALCULATE THE NORMAL PLANE WHEN THE VELOCITY VECTOR CHANGES #######
     #TODO: Under simulation the update may happen twice per timestep, wasting computational resources
     @property
-    def velocity_vector_i(self):
-        return self._velocity_vector_i
+    def aero_body_CTM(self):
+        return self._aero_body_CTM
 
-    @velocity_vector_i.setter
-    def velocity_vector_i(self, new_velocity_vector_i):
-        self._velocity_vector_i = new_velocity_vector_i
-        self.velocity_vector_b = self.C_ib @ new_velocity_vector_i
-        self.project_panels()
-
-    @property
-    def C_ib(self):
-        return self._C_ib
-
-    @C_ib.setter
-    def C_ib(self, new_C_ib):
-        self._C_ib = new_C_ib
-        self.velocity_vector_b = new_C_ib @ self.velocity_vector_i
+    @aero_body_CTM.setter
+    def aero_body_CTM(self, new_C_a_b):
+        self._aero_body_CTM = new_C_a_b
+        self.particle_velocity_vector_b = new_C_a_b @ np.array([-self.velocity, 0, 0])
         self.project_panels()
 
     ###### Make panels moveable during the simulation if wanted ######
@@ -353,7 +346,7 @@ class Satellite:
                ax.scatter(panel[:, 0], panel[:, 1], panel[:, 2], color='r')
 
         if show_velocity_vector:
-            vel_vec = self.velocity_vector_b / np.linalg.norm(self.velocity_vector_b)
+            vel_vec = self.particle_velocity_vector_b / np.linalg.norm(self.particle_velocity_vector_b)
             ax.quiver(0-vel_vec[0], 0-vel_vec[1], 0-vel_vec[2], vel_vec[0], vel_vec[1], vel_vec[2])
 
         if show_panel_vectors:
@@ -375,7 +368,8 @@ class Satellite:
             if len(particle_vectors) != len(impacts):
                 raise ValueError("Number of specified impacts and particle vectors must match")
         if impacts is not None:  # Plot the impact locations of particles with an arrow indicating the particle direction
-            vec_x_dir, vec_y_dir, vec_z_dir = self.velocity_vector_b / np.linalg.norm(self.velocity_vector_b)
+            vec_x_dir, vec_y_dir, vec_z_dir = self.particle_velocity_vector_b / np.linalg.norm(self.particle_velocity_vector_b)
+            print(impacts.shape[0])
             for idx in range(impacts.shape[0]):
                 impact_coords = impacts[idx,:]  #TODO: VECTORIZE
                 ax.scatter(impact_coords[0], impact_coords[1], impact_coords[2], marker='x', color='r')
