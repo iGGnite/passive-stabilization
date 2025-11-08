@@ -8,7 +8,7 @@ class PassiveStabilization:
     """
     def __init__(self, settings=None):
         self.sat = None
-        self.dt = 0.1  # Time step (s)
+        self.dt = 1/30  # Time step (s)
         self.simulation_duration = 0.1*60*60  # Simulation time (s)
         self.altitude = 400000  # Altitude (m)
         self.air_density = 1e-11  # Air density (kg/m^3)
@@ -18,24 +18,23 @@ class PassiveStabilization:
         self.particle_velocity = 7.8e3  # Total velocity of incoming particles (m/s)
 
         self.com = np.ndarray
-        self.aero_to_body_eul = np.array([0, 0, 0])
+        self.inertial_to_body_eul = np.array([0, 0, 0])
+        self._inertial_to_body_quat = eul_to_quat(np.deg2rad(self.inertial_to_body_eul))
 
-        self._aero_to_body_quat = eul_to_quat(self.aero_to_body_eul)
-        self.aero_to_body_CTM = quat_to_CTM(self._aero_to_body_quat)
-        self.v_particle_aero_frame = np.array([-self.particle_velocity, 0, 0])
-        self.v_particle_body_frame = self.aero_to_body_CTM @ self.v_particle_aero_frame
+        self.R_inertial_to_body = quat_to_CTM(self._inertial_to_body_quat)
+        self.v_particle_inertial_frame = np.array([-self.particle_velocity, 0, 0])
+        self.v_particle_body_frame = self.R_inertial_to_body @ self.v_particle_inertial_frame
 
         self.inertia = 1*np.eye(3)  # TODO: obtain a reasonable estimate
         self.inertia_inv = np.linalg.inv(self.inertia)  #TODO: re-estimate with changing panel angle
         self.angular_momentum = np.zeros(3)  # TODO: Could be an initial value for tumbling and despin
-        self.angular_rate = self.inertia_inv @ self.angular_momentum
-
+        self.omega_ib_i = self.inertia_inv @ self.angular_momentum  # Rotation rate of body wrt inertial frame, in inertial frame
 
 
     def create_cubesat(self, length: float, width: float, height: float, panel_angles: np.ndarray):
         self.sat = Satellite(length, width, height, panel_angles)
         self.sat.velocity = self.particle_velocity
-        self.sat.C_b = quat_to_CTM(self._aero_to_body_quat)
+        self.sat.C_b = quat_to_CTM(self._inertial_to_body_quat)
         self.com = self.sat.com
 
     def run_simulation(self,visualise_each_timestep=False):
@@ -44,8 +43,8 @@ class PassiveStabilization:
         state[:, 0] = time
         for t_idx, t in enumerate(time):
             self.simulate_timestep(visualise_timestep=visualise_each_timestep)
-            state[t_idx, 1:4] = self.angular_rate
-            state[t_idx, 4:8] = self._aero_to_body_quat
+            state[t_idx, 1:4] = self.omega_ib_i
+            state[t_idx, 4:8] = self._inertial_to_body_quat
         return state
 
 
@@ -55,7 +54,7 @@ class PassiveStabilization:
                           impact_type: str = "elastic"):
         swept_volume = self.sat.shaded_area * self.particle_velocity * self.dt
         n_particles = int(self.particles_per_cubic_meter * swept_volume)
-        print(f"n_particles: {n_particles} in this time step")
+        # print(f"n_particles: {n_particles} in this time step")
         impact_panel_indices, impact_coordinates, particle_velocity_vectors = (
             self.sat.generate_impacting_particle(n_particles=n_particles))
         if visualise_timestep:
@@ -65,11 +64,11 @@ class PassiveStabilization:
                                          impact_coordinates=impact_coordinates,
                                          impact_type=impact_type)
         #TODO: Do something with the linear momentum change for deorbiting and such
-        self.angular_momentum += d_L
-        self.angular_rate = self.inertia_inv @ self.angular_momentum
-
-        self.aero_to_body_quat += q_dot(self._aero_to_body_quat, self.angular_rate) * self.dt
-        self.aero_to_body_quat /= np.linalg.norm(self.aero_to_body_quat)
+        self.angular_momentum_body_frame += d_L
+        self.angular_rate_body_frame = self.inertia_inv @ (quat_to_CTM(self._aero_to_body_quat) @ self.angular_momentum_body_frame) # This is likely defined wrong. Inspect relation of angular rate and angular momentum, and their respective frames of reference
+        self.angular_momentum = ...
+        self.aero_to_body_quat = q_update(self._aero_to_body_quat, self.angular_rate_body_frame, self.dt)
+        # self.aero_to_body_quat /= np.linalg.norm(self.aero_to_body_quat)
         # print(f"new attitude: {np.rad2deg(quat_to_eul(self.aero_to_body_quat))}")
         # print(f"new angular_rate: {self.angular_rate}")
 

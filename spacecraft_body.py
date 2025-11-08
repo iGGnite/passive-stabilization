@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import mapbox_earcut as earcut
 from matplotlib.lines import Line2D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, MultiPolygon
 from shapely.set_operations import unary_union
 
 
@@ -24,9 +24,21 @@ def set_axes_equal(ax):
     ax.set_zlim3d([center[2] - radius, center[2] + radius])
 
 
+def extract_polygon(geom):
+    if isinstance(geom, Polygon):
+        return geom
+    elif isinstance(geom, MultiPolygon):
+        # Return the first (and hopefully only) non-empty polygon
+        for poly in geom.geoms:
+            if not poly.is_empty and poly.area > 1e-10:
+                return poly
+    raise ValueError("No valid polygon found in geometry.")
+
+
 
 class Panel:
-    def __init__(self, length: float, width: float, normal_vector: np.array, forward_vector: np.array, body: bool = True):
+    """Geometry of panel is defined in this class"""
+    def __init__(self, length: float, width: float, normal_vector: np.ndarray, forward_vector: np.ndarray, body: bool = True):
         self.body = body
         self.length = length
         self.width = width
@@ -34,47 +46,50 @@ class Panel:
         self.f = forward_vector
         self.body_normal_vector = np.array
         self.body_forward_vector = np.array
-        self.body_nodes = np.array
+        self.vertices_body_frame = np.array
         self.polygon = Polygon
         self.panel_area = self.length * self.width
         ### Panel origin in centre of panel ###
-        self.local_nodes = np.array((
+        self.vertices_panel_frame = np.array((
             [-self.length/2, self.width/2,  0], # rear left
             [-self.length/2, -self.width/2, 0], # rear right
             [ self.length/2, -self.width/2, 0], # front right
             [ self.length/2, self.width/2,  0], # front left
         ))
-        n_cross_f = np.cross(self.n, self.f)
-        B = np.array(np.vstack((self.f, n_cross_f, self.n))).T
-        self.initial_forward_vector = np.array([1, 0, 0])
-        self.initial_normal_vector = np.array([0, 0, 1])
-        self.body_normal_vector = B @ self.initial_normal_vector
-        self.body_forward_vector = B @ self.initial_forward_vector
-        self.panel_center = np.ndarray
-        if body:  # Rotate about centre of panel (NOTE: potential flaw if body panels not perpendicular)
-            self.local_nodes = (B @ self.local_nodes.T).T
-        if not body:  # Rotate around hinge point
-            self.local_nodes = self.local_nodes + np.array([-self.length/2, 0, 0]).T
-            self.local_nodes = (B @ self.local_nodes.T).T
+        body_frame_basis_vectors = np.array(np.vstack((self.f, self.n, np.cross(self.n, self.f)))).T
+        self.panel_forward_vector = np.array([1, 0, 0])
+        self.panel_normal_vector = np.array([0, 0, 1])
+        panel_frame_basis_vectors = np.array(np.vstack((self.panel_forward_vector,
+                                                        self.panel_normal_vector,
+                                                        np.cross(self.panel_normal_vector, self.panel_forward_vector)))).T
+        R_panel_to_body = body_frame_basis_vectors @ panel_frame_basis_vectors.T
 
-        # self.projection_plane = list
+
+        self.body_normal_vector = R_panel_to_body @ self.panel_normal_vector
+        self.body_forward_vector = R_panel_to_body @ self.panel_forward_vector
+        # self.panel_center = np.ndarray
+        if body:  # Rotate about centre of panel (NOTE: potential flaw if body panels not perpendicular)
+            self.vertices_body_frame = (R_panel_to_body @ self.vertices_panel_frame.T).T
+        if not body:  # Rotate around hinge point
+            self.vertices_body_frame = self.vertices_panel_frame + np.array([-self.length/2, 0, 0]).T
+            self.vertices_body_frame = (R_panel_to_body @ self.vertices_body_frame.T).T
+
     def define_body_nodes(self, position_vector: np.ndarray):
-        self.body_nodes = np.array(self.local_nodes + position_vector)
-        self.panel_center = np.mean(self.body_nodes, axis=0)
+        self.vertices_body_frame = np.array(self.vertices_body_frame + position_vector)
+        self.panel_center = np.mean(self.vertices_body_frame, axis=0)
         return
 
     def projected_polygon(self, projection_plane: list)->Polygon:
-        x = np.dot((self.body_nodes - projection_plane[-1]), projection_plane[0])
-        y = np.dot((self.body_nodes - projection_plane[-1]), projection_plane[1])
+        x = np.dot((self.vertices_body_frame - projection_plane[-1]), projection_plane[0])
+        y = np.dot((self.vertices_body_frame - projection_plane[-1]), projection_plane[1])
         projected_coords = np.vstack((x,y)).T
         self.polygon = Polygon(projected_coords)
-        # print(f"area: {self.polygon.area}")
         return self.polygon
 
 
 
 class Satellite:
-
+    """Geometry of satellite is defined in this class"""
     def __init__(self, x_len: float, y_width: float, z_width: float, rear_panel_angles: np.ndarray,
                  panel_length: float = None, panel_width: float = None, inertia: np.ndarray = np.eye(3)):
         self.x_len = x_len
@@ -85,7 +100,7 @@ class Satellite:
         if self.panel_length is None:
             self.panel_length = self.x_len
         if self.panel_width is None:
-            self.panel_width = max(self.y_width, self.z_width)
+            self.panel_width = min(self.y_width, self.z_width)
         self._panel_angles = rear_panel_angles.astype(float)
         self.velocity = 1 # Dummy value
         # self._velocity_vector_i = np.array([-1, 0, 0])  # Velocity vector of the incoming airflow in the inertial frame
@@ -94,11 +109,11 @@ class Satellite:
         self.panel_polygons = [None] * 10
         self.shadow: Polygon = None # type: ignore
         self.shadow_triangle_coords = None
-        self.shadow_triangle_areas: np.ndarray = np.array
+        self.shadow_triangle_areas: np.ndarray = None # type: ignore
         self.rear_forward_vectors: list[np.ndarray | None] = [None] * 4 # type: ignore
         self.rear_normal_vectors: list[np.ndarray | None] = [None] * 4  # type: ignore
         self.panels: list[Panel | None] = [None] * 10
-        self.panel_nodes = [np.ndarray] * 10
+        self.panel_vertices = [np.ndarray] * 10
         self.shaded_area: float = 0
         self.com: np.ndarray = np.zeros(3)
 
@@ -116,33 +131,33 @@ class Satellite:
             np.array([-self.x_len/2, self.y_width/2, 0]), np.array([-self.x_len/2, -self.y_width/2, 0]), # left, right
             np.array([-self.x_len/2, 0, self.z_width/2]), np.array([-self.x_len/2, 0, -self.z_width/2]), # top, bottom
         ]
-        self.body_forward_vectors = [
-            np.array([0, 0, 1]), np.array([0, 0, 1]), # point up
-            np.array([1, 0, 0]), np.array([1, 0, 0]), # point forward
-            np.array([1, 0, 0]), np.array([1, 0, 0]), # point forward
-        ]
         self.body_normal_vectors = [
             np.array([1, 0, 0]), np.array([-1, 0,  0]),  # point forward, backward
             np.array([0, 1, 0]), np.array([0,  -1, 0]),  # point left, right
             np.array([0, 0, 1]), np.array([0,  0,  -1]),  # point up, down
         ]
+        self.body_forward_vectors = [
+            np.array([0, 0, 1]), np.array([0, 0, 1]), # point up
+            np.array([1, 0, 0]), np.array([1, 0, 0]), # point forward
+            np.array([1, 0, 0]), np.array([1, 0, 0]), # point forward
+        ]
         self.panel_hinges = [
-            np.array([-x_len, 0, z_width / 2]),  # up
-            np.array([-x_len, 0, -z_width / 2]),  # down
             np.array([-x_len, y_width / 2, 0]),  # left
             np.array([-x_len, -y_width / 2, 0]),  # right
+            np.array([-x_len, 0, z_width / 2]),  # upper
+            np.array([-x_len, 0, -z_width / 2]),  # lower
         ]
         #TODO: There is likely room to make this code more succinct
         for idx, panel_center in enumerate(self.body_panel_centres):
-            if idx < 2:  # front and back
+            if idx < 2:  # front and back (0, 1)
                 panel = Panel(self.y_width, self.z_width, self.body_normal_vectors[idx], self.body_forward_vectors[idx])
-            elif 1 < idx < 4:  # sides
+            elif 1 < idx < 4:  # sides (2,3)
                 panel = Panel(self.x_len, self.y_width, self.body_normal_vectors[idx], self.body_forward_vectors[idx])
-            else:  # top and bottom
+            else:  # top and bottom (4,5)
                 panel = Panel(self.x_len, self.z_width, self.body_normal_vectors[idx], self.body_forward_vectors[idx])
             panel.define_body_nodes(panel_center)
             self.panels[idx] = panel
-            self.panel_nodes[idx] = panel.body_nodes  # type: ignore
+            self.panel_vertices[idx] = panel.vertices_body_frame  # type: ignore
 
         ######## CREATION OF REAR PANEL COORDINATES, WITH ABILITY TO DETERMINE ANGLE PER PANEL ########
         self.create_rear_panels()
@@ -154,23 +169,23 @@ class Satellite:
 
     def create_rear_panels(self):
         self.rear_forward_vectors = [
-            np.array([np.cos(self._panel_angles[0]), 0, -np.sin(self._panel_angles[0])]), # upper rear panel
-            np.array([np.cos(self._panel_angles[1]), 0, np.sin(self._panel_angles[1])]),  # lower rear panel
             np.array([np.cos(self._panel_angles[2]), -np.sin(self._panel_angles[2]), 0]), # left rear panel
             np.array([np.cos(self._panel_angles[3]), np.sin(self._panel_angles[3]), 0]),  # right rear panel
+            np.array([np.cos(self._panel_angles[0]), 0, -np.sin(self._panel_angles[0])]), # upper rear panel
+            np.array([np.cos(self._panel_angles[1]), 0, np.sin(self._panel_angles[1])]),  # lower rear panel
         ]
         self.rear_normal_vectors = [
-            np.array([np.sin(self._panel_angles[0]), 0, np.cos(self._panel_angles[0])]), # upper rear panel
-            np.array([np.sin(self._panel_angles[1]), 0, -np.cos(self._panel_angles[1])]),  # lower rear panel
             np.array([np.sin(self._panel_angles[2]), np.cos(self._panel_angles[2]), 0]), # left rear panel
             np.array([np.sin(self._panel_angles[3]), -np.cos(self._panel_angles[3]), 0]),  # right rear panel
+            np.array([np.sin(self._panel_angles[0]), 0, np.cos(self._panel_angles[0])]), # upper rear panel
+            np.array([np.sin(self._panel_angles[1]), 0, -np.cos(self._panel_angles[1])]),  # lower rear panel
         ]
         for idx, hinge_location in enumerate(self.panel_hinges):
             panel = Panel(self.panel_length, self.panel_width, self.rear_normal_vectors[idx],
                           self.rear_forward_vectors[idx], body=False)
             panel.define_body_nodes(hinge_location)
             self.panels[6+idx] = panel
-            self.panel_nodes[6+idx] = panel.body_nodes  # type: ignore
+            self.panel_vertices[6 + idx] = panel.vertices_body_frame  # type: ignore
         centres = np.zeros((10,3))
         total_surface_area = 0.0
         for idx, panel in enumerate(self.panels):
@@ -190,12 +205,14 @@ class Satellite:
         x /= np.linalg.norm(x)
         y = np.cross(velocity_unit_vector_b,x)  # Crucial order to have a right-handed coordinate system!
         y /= np.linalg.norm(y)
-        self.shadow_projection_axis_system = [x, y, velocity_unit_vector_b, origin] # x, y, z + origin
+        self.shadow_projection_axis_system = [x, y, velocity_unit_vector_b, origin] # x, y, z + origin defined in body frame
         # print(f"shadow projection axis system: {self.shadow_projection_axis_system}")
         for panel in self.panels:
             self.panel_polygons.append(panel.projected_polygon(self.shadow_projection_axis_system))
         # Because the shadow area will matter to determine number of particles encountered
-        self.shadow = unary_union(self.panel_polygons)
+        self.shadow = extract_polygon(unary_union(self.panel_polygons))
+        # self.shadow = self.shadow)
+
         vertices = np.array(self.shadow.exterior.coords[:-1], dtype=np.float32)  # type: ignore
         triangulated = earcut.triangulate_float32(vertices, np.array([len(vertices)], dtype=np.uint32))
         self.shadow_triangle_coords = vertices[triangulated.reshape(-1, 3)]
@@ -204,6 +221,8 @@ class Satellite:
             self.shadow_triangle_areas[idx] = 0.5*np.abs(np.cross(tri[0,:]-tri[1,:],tri[0,:]-tri[2,:]))
         self.shaded_area = np.sum(self.shadow_triangle_areas)
         return
+
+
 
     def generate_impacting_particle(self, particle_velocity_vectors: np.ndarray = None,
                                     n_particles: int = 1, method: str = "elastic") -> list[np.ndarray]:
@@ -266,8 +285,8 @@ class Satellite:
                 impact_points[idx,indices_of_particles_facing_this_panel,:] = p  # Register that point
 
                 ############ DETERMINE WHETHER IMPACT ON INFINITE PLANE LIES WITHIN THE EDGES OF THE PANEL ############
-                panel_corners = panel.body_nodes  # 4x3 array of corner nodes of panel
-                panel_corners_shifted_by_one = np.vstack((panel.body_nodes[1:, :], panel.body_nodes[0, :]))  # 4x3 array of corner nodes of panel, moving the first row to the end
+                panel_corners = panel.vertices_body_frame  # 4x3 array of corner nodes of panel
+                panel_corners_shifted_by_one = np.vstack((panel.vertices_body_frame[1:, :], panel.vertices_body_frame[0, :]))  # 4x3 array of corner nodes of panel, moving the first row to the end
                 edge_vectors = panel_corners_shifted_by_one - panel_corners # Vectors defining edges of the panel, pointing in CCW direction (looking at panel contra-normal)
                 node_to_point = p[:, None, :] - panel_corners[None, :, :]  # Vector pointing from panel corner to impact point (VERIFIED working)
 
@@ -283,7 +302,7 @@ class Satellite:
 
 
     def print_nodes(self):
-        for nodes in self.panel_nodes:
+        for nodes in self.panel_vertices:
             print(nodes)
         return
 
@@ -338,7 +357,7 @@ class Satellite:
         """
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
-        for panel in self.panel_nodes: # Draw the panels which make up the cubesat
+        for panel in self.panel_vertices: # Draw the panels which make up the cubesat
             vertices = [panel]
             panel_collection = Poly3DCollection(vertices, facecolors='skyblue', edgecolors='k', linewidths=.5, alpha=0.3)
             ax.add_collection3d(panel_collection)
@@ -350,7 +369,7 @@ class Satellite:
             ax.quiver(0-vel_vec[0], 0-vel_vec[1], 0-vel_vec[2], vel_vec[0], vel_vec[1], vel_vec[2])
 
         if show_panel_vectors:
-            for panel, nodes in zip(self.panels, self.panel_nodes):
+            for panel, nodes in zip(self.panels, self.panel_vertices):
                 center = nodes.mean(axis=0)
                 n_vec = panel.n / np.linalg.norm(panel.n) * 0.3
                 f_vec = panel.f / np.linalg.norm(panel.f) * 0.3

@@ -12,29 +12,34 @@ import pickle as pkl
 
 if __name__ == "__main__":
     np.random.seed(2)
-    run = False
+    run = True
     if run:
         sim = PassiveStabilization()
-        sim.create_cubesat(1.2, .4, .4, np.array([30, 30, 30, 30]))
-        sim.aero_to_body_quat = eul_to_quat(np.deg2rad(np.array([0,0,10])))
+        sim.create_cubesat(1, .4, .4, 0*np.array([30, 30, 30, 30]))
+        # sim.aero_to_body_quat = eul_to_quat(np.deg2rad(np.array([0,0,10])))
+        sim.sat.visualise()
         # sim.show_attitude()
         # sim.visualise_3d(True)
         # sim.visualise_3d(True,test_array)
         # particles = sim.sat.generate_impacting_particle(n_particles=600)
         # print(particles[1])
         # sim.visualise_3d(True,)
-        state = sim.run_simulation()
-        with open('state.pickle', 'wb') as f:
-            pkl.dump(state, f)
+        # state = sim.run_simulation(False)
+        # with open('state.pickle', 'wb') as f:
+        #     pkl.dump(state, f)
 
-    with open('state.pickle', 'rb') as f:
-        state = pkl.load(f)
-    plot_angular_rate(state)
-    plt.show()
-    plot_attitude(state,False)
-    plt.show()
-    quat_to_CTM(state[:,4:8])
-    animate_rotations(state)
+    # with open('state.pickle', 'rb') as f:
+    #     state = pkl.load(f)
+    # plot_angular_rate(state)
+    # plt.show()
+    # plot_attitude(state,False)
+    # plt.show()
+    # plot_attitude(state,True)
+    # plt.show()
+    # print('----')
+    # print(quat_to_CTM(state[:,4:8])[0])
+    # print(quat_to_CTM(state[0,4:8]))
+    # animate_rotations(state)
 
 
     #TODO: Implement some function to calculate/approximate panel moments of inertia for later dynamics implementation

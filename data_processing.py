@@ -56,9 +56,9 @@ def animate_rotations(state, time=None):
         ax.set_ylabel('Y')
         ax.set_zlabel('Z')
         R = rotations[frame]
-        for vec, color in zip(R.T, ['r', 'g', 'b']):
+        for vec, color in zip(R, ['r', 'g', 'b']):
             ax.quiver(0, 0, 0, *vec, color=color)
         ax.set_title(f"Time: {time[frame]:.2f}s")
 
-    ani = FuncAnimation(fig, update, frames=len(time), interval=5)
+    ani = FuncAnimation(fig, update, frames=len(time), interval=2)
     plt.show()
