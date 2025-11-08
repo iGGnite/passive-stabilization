@@ -10,11 +10,12 @@ def plot_angular_rate(state):
     plt.plot(time, angular_rate[:,0])
     plt.plot(time, angular_rate[:,1])
     plt.plot(time, angular_rate[:,2])
-    plt.legend(['p','q','r'])
+    plt.legend(['omega_ib_b,x','omega_ib_b,y','omega_ib_b,z'])
     # plt.show()
 
 
 def plot_attitude(state, quaternion = False):
+    plt.figure()
     time = state[:,0]
     quaternions = state[:,4:8]
     if quaternion:
@@ -29,14 +30,22 @@ def plot_attitude(state, quaternion = False):
         plt.plot(time, euler_angles[:,1])
         plt.plot(time, euler_angles[:,2])
         plt.legend(['Roll','Pitch','Yaw'])
+    plt.xlabel('time (s)')
     # plt.show()
 
+def plot_angular_momentum(state):
+    time = state[:,0]
+    H = state[:,8:11]
+    plt.plot(time, H[:, 0])
+    plt.plot(time, H[:, 1])
+    plt.plot(time, H[:, 2])
 
 
 
-def animate_rotations(state, time=None):
+def animate_rotations(state, time=None, ):
     time = state[:, 0] if time is None else time
     rotations = quat_to_CTM(state[:, 4:8])  # shape: (N, 3, 3)
+    ang_momentum = state[:, 8:11]
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
@@ -46,8 +55,9 @@ def animate_rotations(state, time=None):
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
-
+    sample = 10
     def update(frame):
+        frame = sample*frame
         ax.cla()  # Clears the whole axes safely
         ax.set_xlim([-1, 1])
         ax.set_ylim([-1, 1])
@@ -56,9 +66,11 @@ def animate_rotations(state, time=None):
         ax.set_ylabel('Y')
         ax.set_zlabel('Z')
         R = rotations[frame]
+        H = ang_momentum[frame]/np.linalg.norm(ang_momentum[frame])
         for vec, color in zip(R, ['r', 'g', 'b']):
             ax.quiver(0, 0, 0, *vec, color=color)
+            ax.quiver(0, 0, 0, H[0], H[1], H[2], color='purple')
         ax.set_title(f"Time: {time[frame]:.2f}s")
 
-    ani = FuncAnimation(fig, update, frames=len(time), interval=2)
+    ani = FuncAnimation(fig, update, frames=int(len(time)/sample), interval=5)
     plt.show()

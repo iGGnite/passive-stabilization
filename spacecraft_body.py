@@ -49,6 +49,7 @@ class Panel:
         self.vertices_body_frame = np.array
         self.polygon = Polygon
         self.panel_area = self.length * self.width
+        self.mass = 0.2 # (kg)
         ### Panel origin in centre of panel ###
         self.vertices_panel_frame = np.array((
             [-self.length/2, self.width/2,  0], # rear left
@@ -62,17 +63,16 @@ class Panel:
         panel_frame_basis_vectors = np.array(np.vstack((self.panel_forward_vector,
                                                         self.panel_normal_vector,
                                                         np.cross(self.panel_normal_vector, self.panel_forward_vector)))).T
-        R_panel_to_body = body_frame_basis_vectors @ panel_frame_basis_vectors.T
+        self.R_panel_to_body = body_frame_basis_vectors @ panel_frame_basis_vectors.T
 
-
-        self.body_normal_vector = R_panel_to_body @ self.panel_normal_vector
-        self.body_forward_vector = R_panel_to_body @ self.panel_forward_vector
+        self.body_normal_vector = self.R_panel_to_body @ self.panel_normal_vector
+        self.body_forward_vector = self.R_panel_to_body @ self.panel_forward_vector
         # self.panel_center = np.ndarray
         if body:  # Rotate about centre of panel (NOTE: potential flaw if body panels not perpendicular)
-            self.vertices_body_frame = (R_panel_to_body @ self.vertices_panel_frame.T).T
+            self.vertices_body_frame = (self.R_panel_to_body @ self.vertices_panel_frame.T).T
         if not body:  # Rotate around hinge point
             self.vertices_body_frame = self.vertices_panel_frame + np.array([-self.length/2, 0, 0]).T
-            self.vertices_body_frame = (R_panel_to_body @ self.vertices_body_frame.T).T
+            self.vertices_body_frame = (self.R_panel_to_body @ self.vertices_body_frame.T).T
 
     def define_body_nodes(self, position_vector: np.ndarray):
         self.vertices_body_frame = np.array(self.vertices_body_frame + position_vector)
@@ -103,9 +103,11 @@ class Satellite:
             self.panel_width = min(self.y_width, self.z_width)
         self._panel_angles = rear_panel_angles.astype(float)
         self.velocity = 1 # Dummy value
-        # self._velocity_vector_i = np.array([-1, 0, 0])  # Velocity vector of the incoming airflow in the inertial frame
-        # self._C_ib = np.eye(3)  #
-        self._aero_body_CTM = np.eye(3) # Body orientation, to be updated externally
+        self.mass = 2 # (kg), dummy value
+        self.panel_mass = 0.2 # (kg), per panel
+
+
+        self._R_aero_to_body = np.eye(3) # Body orientation, to be updated externally
         self.panel_polygons = [None] * 10
         self.shadow: Polygon = None # type: ignore
         self.shadow_triangle_coords = None
@@ -115,7 +117,7 @@ class Satellite:
         self.panels: list[Panel | None] = [None] * 10
         self.panel_vertices = [np.ndarray] * 10
         self.shaded_area: float = 0
-        self.com: np.ndarray = np.zeros(3)
+        self.com: np.ndarray = np.array([-10, 0, 0])
 
         #TODO: may be unnecessarily expensive to run this
         for idx, panel_angle in enumerate(rear_panel_angles):
@@ -163,7 +165,7 @@ class Satellite:
         self.create_rear_panels()
 
         ######## CALCULATE PROJECTION PLANE WITH INCOMING PARTICLE VELOCITY VECTOR ########
-        self.particle_velocity_vector_b = self._aero_body_CTM @ np.array([-self.velocity, 0, 0])
+        self.particle_velocity_vector_b = self._R_aero_to_body @ np.array([-self.velocity, 0, 0])
         self.shadow_projection_axis_system = [np.array([0, 1, 0]), np.array([0, 0, 1]), np.array([0, 0, 0])]
         self.project_panels()
 
@@ -301,7 +303,7 @@ class Satellite:
         return [indices_of_impacted_panels, impact_3D_coordinates_constr_frame, particle_velocity_vectors]
 
 
-    def print_nodes(self):
+    def print_vertices(self):
         for nodes in self.panel_vertices:
             print(nodes)
         return
@@ -313,16 +315,30 @@ class Satellite:
         self.com = np.array([0, 0, 0])
         return
 
+    def calculate_inertia(self):
+        body_inertia = self.mass / 12 * np.array([[self.y_width**2 + self.z_width**2, 0, 0],
+                                                  [0, self.x_len**2 + self.z_width**2, 0],
+                                                  [0, 0, self.x_len**2 + self.y_width**2]])
+        for panel in self.panels[6:10]:
+            panel_inertia = panel.mass / 12 * np.array([[panel.width**2, 0, 0],
+                                                        [0, panel.length**2, 0],
+                                                        [0, 0, panel.length**2 + panel.width**2]])
+            hinge_vector = np.array([panel.length/2,0,0])
+            panel_inertia += panel.mass * (np.dot(hinge_vector,hinge_vector)*np.eye(3) - np.outer(hinge_vector,hinge_vector))
+            panel_inertia_body_frame = panel.R_panel_to_body @ panel_inertia @ panel.R_panel_to_body.T
+            panel_inertia_body_frame += 
+            print(panel_inertia_body_frame)
+        self.inertia = ...
 
-    ###### AUTOMATICALLY RE-CALCULATE THE NORMAL PLANE WHEN THE VELOCITY VECTOR CHANGES #######
+    ###### RE-CALCULATE THE NORMAL PLANE WHEN THE VELOCITY VECTOR CHANGES #######
     #TODO: Under simulation the update may happen twice per timestep, wasting computational resources
     @property
-    def aero_body_CTM(self):
-        return self._aero_body_CTM
+    def R_aero_to_body(self):
+        return self._R_aero_to_body
 
-    @aero_body_CTM.setter
-    def aero_body_CTM(self, new_C_a_b):
-        self._aero_body_CTM = new_C_a_b
+    @R_aero_to_body.setter
+    def R_aero_to_body(self, new_C_a_b):
+        self._R_aero_to_body = new_C_a_b
         self.particle_velocity_vector_b = new_C_a_b @ np.array([-self.velocity, 0, 0])
         self.project_panels()
 
