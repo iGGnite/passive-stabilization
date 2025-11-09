@@ -91,7 +91,7 @@ class Panel:
 class Satellite:
     """Geometry of satellite is defined in this class"""
     def __init__(self, x_len: float, y_width: float, z_width: float, rear_panel_angles: np.ndarray,
-                 panel_length: float = None, panel_width: float = None, inertia: np.ndarray = np.eye(3)):
+                 panel_length: float = None, panel_width: float = None, inertia: np.ndarray = None):
         self.x_len = x_len
         self.y_width = y_width
         self.z_width = z_width
@@ -117,15 +117,14 @@ class Satellite:
         self.panels: list[Panel | None] = [None] * 10
         self.panel_vertices = [np.ndarray] * 10
         self.shaded_area: float = 0
-        self.com: np.ndarray = np.array([-10, 0, 0])
+        self.com: np.ndarray = np.array([x_len/2, 0, 0])
 
         #TODO: may be unnecessarily expensive to run this
-        for idx, panel_angle in enumerate(rear_panel_angles):
+        for idx, panel_angle in enumerate(self._panel_angles):
             while panel_angle < 0 or panel_angle > 90:
                 ValueError("Panel angle must be between 0 and 90 degrees, but is " + str(panel_angle) + " degrees.")
                 panel_angle = float(input("Provide a new panel angle in degrees:"))
             self._panel_angles[idx] = np.deg2rad(panel_angle)
-        self.inertia = inertia
 
         ######## CREATION OF BODY PANEL COORDINATES ########
         self.body_panel_centres = [
@@ -163,6 +162,9 @@ class Satellite:
 
         ######## CREATION OF REAR PANEL COORDINATES, WITH ABILITY TO DETERMINE ANGLE PER PANEL ########
         self.create_rear_panels()
+        if not inertia:
+
+        self._inertia = inertia
 
         ######## CALCULATE PROJECTION PLANE WITH INCOMING PARTICLE VELOCITY VECTOR ########
         self.particle_velocity_vector_b = self._R_aero_to_body @ np.array([-self.velocity, 0, 0])
@@ -171,16 +173,16 @@ class Satellite:
 
     def create_rear_panels(self):
         self.rear_forward_vectors = [
-            np.array([np.cos(self._panel_angles[2]), -np.sin(self._panel_angles[2]), 0]), # left rear panel
-            np.array([np.cos(self._panel_angles[3]), np.sin(self._panel_angles[3]), 0]),  # right rear panel
-            np.array([np.cos(self._panel_angles[0]), 0, -np.sin(self._panel_angles[0])]), # upper rear panel
-            np.array([np.cos(self._panel_angles[1]), 0, np.sin(self._panel_angles[1])]),  # lower rear panel
+            np.array([np.cos(self._panel_angles[0]), -np.sin(self._panel_angles[0]), 0]), # left rear panel
+            np.array([np.cos(self._panel_angles[1]), np.sin(self._panel_angles[1]), 0]),  # right rear panel
+            np.array([np.cos(self._panel_angles[2]), 0, -np.sin(self._panel_angles[2])]), # upper rear panel
+            np.array([np.cos(self._panel_angles[3]), 0, np.sin(self._panel_angles[3])]),  # lower rear panel
         ]
         self.rear_normal_vectors = [
-            np.array([np.sin(self._panel_angles[2]), np.cos(self._panel_angles[2]), 0]), # left rear panel
-            np.array([np.sin(self._panel_angles[3]), -np.cos(self._panel_angles[3]), 0]),  # right rear panel
-            np.array([np.sin(self._panel_angles[0]), 0, np.cos(self._panel_angles[0])]), # upper rear panel
-            np.array([np.sin(self._panel_angles[1]), 0, -np.cos(self._panel_angles[1])]),  # lower rear panel
+            np.array([np.sin(self._panel_angles[0]), np.cos(self._panel_angles[0]), 0]), # left rear panel
+            np.array([np.sin(self._panel_angles[1]), -np.cos(self._panel_angles[1]), 0]),  # right rear panel
+            np.array([np.sin(self._panel_angles[2]), 0, np.cos(self._panel_angles[2])]), # upper rear panel
+            np.array([np.sin(self._panel_angles[3]), 0, -np.cos(self._panel_angles[3])]),  # lower rear panel
         ]
         for idx, hinge_location in enumerate(self.panel_hinges):
             panel = Panel(self.panel_length, self.panel_width, self.rear_normal_vectors[idx],
@@ -188,12 +190,13 @@ class Satellite:
             panel.define_body_nodes(hinge_location)
             self.panels[6+idx] = panel
             self.panel_vertices[6 + idx] = panel.vertices_body_frame  # type: ignore
-        centres = np.zeros((10,3))
-        total_surface_area = 0.0
-        for idx, panel in enumerate(self.panels):
-            centres[idx,:] = panel.panel_area*panel.panel_center
-            total_surface_area += panel.panel_area
-        self.com = np.sum(centres, axis=0)/total_surface_area
+        #TODO: Transplant to own function
+        # centres = np.zeros((10,3))
+        # total_surface_area = 0.0
+        # for idx, panel in enumerate(self.panels):
+        #     centres[idx,:] = panel.panel_area*panel.panel_center
+        #     total_surface_area += panel.panel_area
+        # self.com = np.sum(centres, axis=0)/total_surface_area
         return
 
 
@@ -316,19 +319,24 @@ class Satellite:
         return
 
     def calculate_inertia(self):
+        self._inertia = np.zeros((3,3))
         body_inertia = self.mass / 12 * np.array([[self.y_width**2 + self.z_width**2, 0, 0],
                                                   [0, self.x_len**2 + self.z_width**2, 0],
                                                   [0, 0, self.x_len**2 + self.y_width**2]])
-        for panel in self.panels[6:10]:
+        r_to_com = self.com - np.array([self.x_len / 2, 0, 0])
+        body_inertia += self.mass * (np.dot(r_to_com,r_to_com)*np.eye(3) - np.outer(r_to_com,r_to_com))
+        self._inertia += body_inertia
+        for idx, panel in enumerate(self.panels[6:10]):
             panel_inertia = panel.mass / 12 * np.array([[panel.width**2, 0, 0],
                                                         [0, panel.length**2, 0],
                                                         [0, 0, panel.length**2 + panel.width**2]])
-            hinge_vector = np.array([panel.length/2,0,0])
-            panel_inertia += panel.mass * (np.dot(hinge_vector,hinge_vector)*np.eye(3) - np.outer(hinge_vector,hinge_vector))
+            r_panel = np.array([panel.length/2,0,0])
+            panel_inertia += panel.mass * (np.dot(r_panel,r_panel)*np.eye(3) - np.outer(r_panel,r_panel))
             panel_inertia_body_frame = panel.R_panel_to_body @ panel_inertia @ panel.R_panel_to_body.T
-            panel_inertia_body_frame += 
-            print(panel_inertia_body_frame)
-        self.inertia = ...
+            r_body = self.com - self.panel_hinges[idx]
+            panel_inertia_body_frame += panel.mass * (np.dot(r_body,r_body)*np.eye(3) - np.outer(r_body,r_body))
+            self._inertia += panel_inertia_body_frame
+        print(self._inertia)
 
     ###### RE-CALCULATE THE NORMAL PLANE WHEN THE VELOCITY VECTOR CHANGES #######
     #TODO: Under simulation the update may happen twice per timestep, wasting computational resources
@@ -352,6 +360,10 @@ class Satellite:
         self._panel_angles = np.deg2rad(new_panel_angles)
         self.create_rear_panels()
         self.project_panels()
+        self.calculate_inertia()
+
+    def get_inertia(self):
+        return self._inertia
 
 
     ###### VISUALISE CUBESAT ######

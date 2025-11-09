@@ -40,6 +40,7 @@ class PassiveStabilization:
         self.sat.velocity = self.particle_velocity
         self.sat.R_ = quat_to_CTM(self._inertial_to_body_quat)
         self.com = self.sat.com
+        self.inertia =
 
     def run_simulation(self,visualise_each_timestep=False):
         time = np.arange(0, self.simulation_duration, self.dt)
