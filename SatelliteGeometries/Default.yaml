@@ -1,0 +1,25 @@
+---
+# This is a default configuration of a hypothetical 3U cubesat, based roughly on CADRE
+name: "Default"
+geometric_properties:
+  length: 0.34 # m
+  width: 0.10 # m
+  height: 0.10 # m
+  panel_length: 0.34 # m
+  panel_width: 0.10 # m
+  panel_angle_left: 70 # deg
+  panel_angle_right: 70 # deg
+  panel_angle_top: 70 # deg
+  panel_angle_bottom: 70 # deg
+mass_properties:
+  mass: 4 # kg
+  inertia: None # If not filled out, estimated with tool
+#    - - 0.1
+#      - 0
+#      - 0
+#    - - 0
+#      - 1
+#      - 0
+#    - - 0
+#      - 0
+#      - 1
