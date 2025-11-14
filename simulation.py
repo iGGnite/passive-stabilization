@@ -1,91 +1,103 @@
 import numpy as np
+from sympy.physics.mechanics import angular_momentum
+
 from spacecraft_body import *
 from dynamics_helper_functions import *
+from time import time
+from yaml import load, CLoader
 
 class PassiveStabilization:
     """
     Simulation object
     """
-    def __init__(self, settings=None):
+    def __init__(self, config: str = "DefaultSimulator"):
+        """Create simulation object"""
         self.sat = None
-        self.dt = 1/100  # Time step (s)
-        self.simulation_duration = 200  # Simulation time (s)
-        self.altitude = 400000  # Altitude (m)
-        self.air_density = 5e-10  # Air density (kg/m^3)
-        self.single_particle_mass = 1e-10 # Mass of single particle (kg)
-        self.particles_per_cubic_meter = self.air_density / self.single_particle_mass
+        self.step = 0
+        ######## LOAD SIMULATOR SETTINGS ########
+        with open("SimulatorConfigs/" + str(config) + ".yaml", "r") as f:
+            settings = (load(f, Loader=CLoader))
+            sim_settings = settings["simulator_settings"]
+            state_init = settings["state"]
+        self.dt = sim_settings["timestep"]  # Time step (s)
+        self.simulation_duration = sim_settings["runtime"]  # Simulation time (s)
+        self.air_density = sim_settings["atmospheric_density"]  # Air density (kg/m^3)
+        self.particle_mass = sim_settings["particle_mass"] # Mass of single particle (kg)
+        if sim_settings["impact_type"] == "elastic" or sim_settings["impact_type"] == 2:
+            self.impact_type = 2
+        elif sim_settings["impact_type"] == "inelastic" or sim_settings["impact_type"] == 1:
+            self.impact_type = 1
+        else:
+            raise ValueError("Impact type is currently limited to elastic or inelastic")
 
-        self.particle_velocity = 7.8e3  # Total velocity of incoming particles (m/s)
+        ######## LOAD INITIAL STATE ########
+        self.altitude = state_init["altitude"]  # Altitude (m)
+        self._inertial_to_body_quat = eul_to_quat(np.deg2rad(np.array(state_init["attitude"])))
+        self.particle_velocity = state_init["velocity"]  # Total velocity of incoming particles (m/s)
+        self.omega_ib_b = np.deg2rad(np.array(state_init["rotation_rates"]))  # rad/s
 
-        self.com = np.ndarray
-        self.inertial_to_body_eul = np.array([0, 0, 0])
-        self._inertial_to_body_quat = eul_to_quat(np.deg2rad(self.inertial_to_body_eul))
-
+        ######## CALCULATE DERIVATIVE PARAMETERS ########
         self.R_inertial_to_body = quat_to_CTM(self._inertial_to_body_quat)
         self.v_particle_inertial_frame = np.array([-self.particle_velocity, 0, 0])
         self.v_particle_body_frame = self.R_inertial_to_body @ self.v_particle_inertial_frame
+        self.particles_per_cubic_meter = self.air_density / self.particle_mass
 
-        self.inertia = np.array([
-            [0.001, 0, 0],
-            [0, 1, 0],
-            [0, 0, 1]
-        ])  # TODO: obtain a reasonable estimate
-        self.inertia_inv = np.linalg.inv(self.inertia)  #TODO: re-estimate with changing panel angle
-        self.angular_momentum = np.zeros(3)  # TODO: Could be an initial value for tumbling and despin
-        self.omega_ib_b = self.inertia_inv @ quat_to_CTM(self._inertial_to_body_quat) @ self.angular_momentum  # Rotation rate of body wrt inertial frame, in inertial frame
+        self.inertia = None
+        self.inertia_inv = None
+        self.com = np.ndarray
 
-
-    def create_cubesat(self, length: float, width: float, height: float, panel_angles: np.ndarray):
-        self.sat = Satellite(length, width, height, panel_angles)
+    def create_cubesat(self, config: str = "DefaultSat"):
+        with open("SatelliteGeometries/" + str(config) + ".yaml", "r") as f:
+            sat_config = load(f, Loader=CLoader)
+        self.sat = Satellite(sat_config)
         self.sat.velocity = self.particle_velocity
         self.sat.R_ = quat_to_CTM(self._inertial_to_body_quat)
         self.com = self.sat.com
-        self.inertia =
+        self.inertia = self.sat.get_inertia()
+        self.inertia_inv = np.linalg.inv(self.inertia)
 
     def run_simulation(self,visualise_each_timestep=False):
-        time = np.arange(0, self.simulation_duration, self.dt)
-        state = np.zeros((len(time), 11))
-        state[:, 0] = time
-        for t_idx, t in enumerate(time):
-            # print(f"t={t}s")
+        time_points = np.arange(0, self.simulation_duration, self.dt)
+        state = np.zeros((len(time_points), 8))
+        state[:, 0] = time_points
+        for t_idx, t in enumerate(time_points):
             self.simulate_timestep(visualise_timestep=visualise_each_timestep)
             state[t_idx, 1:4] = self.omega_ib_b
             state[t_idx, 4:8] = self._inertial_to_body_quat
-            state[t_idx, 8:11] = self.angular_momentum
+            if np.linalg.norm(self.omega_ib_b) > 2*np.pi:
+                print(f"Angular rate exceeds 1 full rotation per second at t: {t}s")
+                return state[:t_idx,:]
         return state
 
 
     def simulate_timestep(self,
                           visualise_timestep=False,
+                          visualise_2d=False,
                           particle_velocity_vector=None,
                           impact_type: str = "elastic"):
-        swept_volume = self.sat.shaded_area * self.particle_velocity * self.dt
+        swept_volume = self.sat.shaded_area * self.particle_velocity * self.dt  # Volume of space swept out by vehicle in timestep dt
         n_particles = int(self.particles_per_cubic_meter * swept_volume)
         # print(f"n_particles: {n_particles} in this time step")
+        impact_panel_indices, impact_coordinates, particle_velocity_vectors, points_in_projection = (
+            self.sat.generate_impacting_particles(n_particles=n_particles))
 
-        impact_panel_indices, impact_coordinates, particle_velocity_vectors = (
-            self.sat.generate_impacting_particle(n_particles=n_particles))
-        if visualise_timestep:
-            self.visualise_3d(show_velocity_vector=True,
-                              impacts=impact_coordinates)
-        d_p, d_L = self.calculate_momentum_exchange(impact_panel_indices=impact_panel_indices,
+        d_p, d_L, ps = self.calculate_momentum_exchange(impact_panel_indices=impact_panel_indices,
                                          impact_coordinates=impact_coordinates,
                                          impact_type=impact_type)
-        #TODO: Do something with the linear momentum change for deorbiting and such
-
-        self.angular_momentum -= quat_to_CTM(self._inertial_to_body_quat).T @ d_L # express ang mom in inertial frame
-        # This is likely defined wrong. Inspect relation of angular rate and angular momentum, and their respective frames of reference
-        self.omega_ib_b = self.inertia_inv @ (quat_to_CTM(self._inertial_to_body_quat) @ self.angular_momentum)
-        # self.angular_momentum = ...
-        self._inertial_to_body_quat = (
+        #TODO: Do something with the linear momentum change for orbital decay and such
+        torque = d_L/self.dt
+        omega_ib_b_dot = self.inertia_inv.dot(torque - np.cross(self.omega_ib_b,self.inertia @ self.omega_ib_b))
+        self.omega_ib_b += omega_ib_b_dot*self.dt
+        self.inertial_to_body_quat = (
             q_update(self._inertial_to_body_quat,
                      self.omega_ib_b, # omega_ib_i seen in b-frame
                      self.dt))
-        self.sat.R_aero_to_body = quat_to_CTM(self._inertial_to_body_quat)
-        # self.aero_to_body_quat /= np.linalg.norm(self.aero_to_body_quat)
-        # print(f"new attitude: {np.rad2deg(quat_to_eul(self.aero_to_body_quat))}")
-        # print(f"new angular_rate: {self.angular_rate}")
 
+        if visualise_timestep and self.step % int(5/self.dt) == 0:
+            self.visualise_3d(show_velocity_vector=True,
+                              impacts=impact_coordinates,
+                              p_at_impacts=ps,
+                              points_in_projection=points_in_projection,)
 
     def calculate_momentum_exchange(self,
                                     impact_panel_indices: list[int] = None,
@@ -97,28 +109,33 @@ class PassiveStabilization:
         #TODO: Consider constant velocity for all particles to speed up computation
         impact_moment_arms = impact_coordinates - self.com
         for idx, panel in enumerate(self.sat.panels):
-            all_panel_normals[idx, :] = panel.body_normal_vector
+            all_panel_normals[idx, :] = panel.body_normal_vector # containing all 10 panels
         if particle_velocity_vectors is None:
             particle_velocity_vectors = np.tile(self.v_particle_body_frame, (n_particles,1))
-        particle_momentum_vector = particle_velocity_vectors * self.single_particle_mass
-        if impact_type == "elastic":
+        particle_momentum_vectors = particle_velocity_vectors * self.particle_mass
+        if impact_type == "elastic":  #TODO: Likely slows down simulation unnecessarily. Instead make alpha part of simulation config file
             alpha = 2
-        elif impact_type == "inelastic" or "absorbed":
+        elif impact_type == "inelastic" or impact_type == "absorbed":
             alpha = 1
         else:
-            ValueError("Invalid impact type")
+            raise ValueError("Invalid impact type, choose either 'elastic' or 'inelastic'")
         panel_normals = all_panel_normals[impact_panel_indices]
-        p_normal_to_panel = (np.einsum('ij,ij->i', particle_momentum_vector, panel_normals)[:,None]*
+        p_normal_to_panel = (np.einsum('ij,ij->i', particle_momentum_vectors, panel_normals)[:,None]*
                              panel_normals)
-        total_linear_momentum = alpha * np.sum(p_normal_to_panel,axis=0)
-        total_angular_momentum = np.sum(np.cross(impact_moment_arms, total_linear_momentum),axis=0)
+        linear_momentum_transfer = alpha * np.sum(p_normal_to_panel, axis=0)
+
+        total_angular_momentum = np.sum(np.cross(impact_moment_arms, p_normal_to_panel),axis=0)
         # print(f"total_linear_momentum (inertial): {total_linear_momentum}")
         # print(f"total_angular_momentum (inertial): {total_angular_momentum}")
         # particle_velocity_out = (particle_velocity_vectors -
         #                          2*np.einsum('ij,ij->i', particle_velocity_vectors, panel_normals)[:,None]*
         #                          panel_normals)
-        #TODO: Implement second collision check/simulation
-        return total_linear_momentum, total_angular_momentum
+        #TODO: Implement second collision check/simulation, using particle_velocity_out
+        return linear_momentum_transfer, total_angular_momentum, p_normal_to_panel
+
+
+
+
 
     def show_attitude(self):
         aero_axes = np.eye(3)
@@ -135,8 +152,22 @@ class PassiveStabilization:
 
     def visualise_3d(self,
                      show_velocity_vector: bool = False,
-                     impacts: np.ndarray = None):
-        self.sat.visualise(show_velocity_vector=show_velocity_vector, impacts=impacts,show_shadow_axis_system=False)
+                     impacts: np.ndarray = None,
+                     p_at_impacts: np.ndarray = None,
+                     points_in_projection: np.ndarray = None,):
+        """
+        :param show_velocity_vector: Whether to show the velocity vector
+        :type show_velocity_vector: bool
+        :param impacts: Array containing location of particle impacts
+        :type impacts: np.ndarray
+        :param p_at_impacts: Array containing vectors representing momentum transfer at particle impacts
+        :type p_at_impacts: np.ndarray
+        :param points_in_projection: Array containing points generated on projection plane
+        :type points_in_projection: np.ndarray
+        :return:
+        """
+        self.sat.visualise(show_velocity_vector=show_velocity_vector, impacts=impacts,show_shadow_axis_system=False,
+                           p_at_impact_vectors=p_at_impacts,points_in_projection=points_in_projection)
         plt.show()
 
     @property
@@ -145,10 +176,12 @@ class PassiveStabilization:
 
     @inertial_to_body_quat.setter
     def inertial_to_body_quat(self, new_quaternion_attitude):
-            self._inertial_to_body_quat = new_quaternion_attitude
-            self.R_inertial_to_body = quat_to_CTM(self._inertial_to_body_quat)
-            self.v_particle_body_frame = self.R_inertial_to_body @ self.v_particle_inertial_frame
-            self.sat.R_aero_to_body = self.R_inertial_to_body #TODO: Untangle aerodynamic and inertial orientation
+        """Redefines satellite body attitude wrt inertial frame, and updates associated parameters elsewhere."""
+        self._inertial_to_body_quat = new_quaternion_attitude
+        self.R_inertial_to_body = quat_to_CTM(self._inertial_to_body_quat)
+        self.v_particle_body_frame = self.R_inertial_to_body.T @ self.v_particle_inertial_frame
+        self.sat.R_aero_to_body = self.R_inertial_to_body #TODO: Untangle aerodynamic and inertial orientation in future expansion
 
-            # self.sat.aero_body_CTM = self.aero_to_body_CTM
-            # self.sat.
+    def set_panel_angles(self, panel_angles: np.ndarray):
+        """Sets new panel angles for rear panels"""
+        self.sat.panel_angles = panel_angles

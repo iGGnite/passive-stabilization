@@ -1,0 +1,26 @@
+---
+# These are hypothetical configurations, I am aware these have no panels as
+# described in this model
+name: "Delfi-PQ"
+geometric_properties:
+  length: 0.18 # m
+  width: 0.05 # m
+  height: 0.05 # m
+  panel_length: 0.18 # m
+  panel_width: 0.05 # m
+  panel_angles:
+    - 20
+    - 20
+    - 20
+    - 20
+  mass: 0.6 # kg
+  inertia: None # If not filled out, estimated with tool
+#    - - 0.1
+#      - 0
+#      - 0
+#    - - 0
+#      - 1
+#      - 0
+#    - - 0
+#      - 0
+#      - 1

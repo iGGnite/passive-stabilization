@@ -1,6 +1,7 @@
 .idea
 __pycache__/
 /old_2d_shadow_code.py
-state.pickle
+state_24h_10.pickle
 main.py
 test.py
+state.pickle

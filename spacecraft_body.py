@@ -42,14 +42,14 @@ class Panel:
         self.body = body
         self.length = length
         self.width = width
-        self.n = normal_vector
-        self.f = forward_vector
-        self.body_normal_vector = np.array
-        self.body_forward_vector = np.array
+        self.body_normal_vector = normal_vector
+        self.body_forward_vector = forward_vector
+        # self.body_normal_vector = np.array
+        # self.body_forward_vector = np.array
         self.vertices_body_frame = np.array
         self.polygon = Polygon
         self.panel_area = self.length * self.width
-        self.mass = 0.2 # (kg)
+        self.mass = 0.1 # (kg)
         ### Panel origin in centre of panel ###
         self.vertices_panel_frame = np.array((
             [-self.length/2, self.width/2,  0], # rear left
@@ -57,7 +57,8 @@ class Panel:
             [ self.length/2, -self.width/2, 0], # front right
             [ self.length/2, self.width/2,  0], # front left
         ))
-        body_frame_basis_vectors = np.array(np.vstack((self.f, self.n, np.cross(self.n, self.f)))).T
+        body_frame_basis_vectors = np.array(np.vstack((self.body_forward_vector, self.body_normal_vector,
+                                                       np.cross(self.body_normal_vector, self.body_forward_vector)))).T
         self.panel_forward_vector = np.array([1, 0, 0])
         self.panel_normal_vector = np.array([0, 0, 1])
         panel_frame_basis_vectors = np.array(np.vstack((self.panel_forward_vector,
@@ -65,21 +66,21 @@ class Panel:
                                                         np.cross(self.panel_normal_vector, self.panel_forward_vector)))).T
         self.R_panel_to_body = body_frame_basis_vectors @ panel_frame_basis_vectors.T
 
-        self.body_normal_vector = self.R_panel_to_body @ self.panel_normal_vector
-        self.body_forward_vector = self.R_panel_to_body @ self.panel_forward_vector
+        # self.body_normal_vector = self.R_panel_to_body @ self.panel_normal_vector
+        # self.body_forward_vector = self.R_panel_to_body @ self.panel_forward_vector
         # self.panel_center = np.ndarray
         if body:  # Rotate about centre of panel (NOTE: potential flaw if body panels not perpendicular)
             self.vertices_body_frame = (self.R_panel_to_body @ self.vertices_panel_frame.T).T
-        if not body:  # Rotate around hinge point
-            self.vertices_body_frame = self.vertices_panel_frame + np.array([-self.length/2, 0, 0]).T
+        if not body:  # Rotate around hinge point (hinge point at origin)
+            self.vertices_body_frame = self.vertices_panel_frame + np.array([-self.length / 2, 0, 0]).T
             self.vertices_body_frame = (self.R_panel_to_body @ self.vertices_body_frame.T).T
 
-    def define_body_nodes(self, position_vector: np.ndarray):
+    def define_body_nodes(self, position_vector: np.ndarray):  #
         self.vertices_body_frame = np.array(self.vertices_body_frame + position_vector)
-        self.panel_center = np.mean(self.vertices_body_frame, axis=0)
+        self.panel_center_body_frame = np.mean(self.vertices_body_frame, axis=0)
         return
 
-    def projected_polygon(self, projection_plane: list)->Polygon:
+    def projected_polygon(self, projection_plane: list)->Polygon:  # Create polygon from points making up panel shadow
         x = np.dot((self.vertices_body_frame - projection_plane[-1]), projection_plane[0])
         y = np.dot((self.vertices_body_frame - projection_plane[-1]), projection_plane[1])
         projected_coords = np.vstack((x,y)).T
@@ -90,22 +91,28 @@ class Panel:
 
 class Satellite:
     """Geometry of satellite is defined in this class"""
-    def __init__(self, x_len: float, y_width: float, z_width: float, rear_panel_angles: np.ndarray,
-                 panel_length: float = None, panel_width: float = None, inertia: np.ndarray = None):
-        self.x_len = x_len
-        self.y_width = y_width
-        self.z_width = z_width
-        self.panel_length = panel_length
-        self.panel_width = panel_width
-        if self.panel_length is None:
-            self.panel_length = self.x_len
-        if self.panel_width is None:
-            self.panel_width = min(self.y_width, self.z_width)
-        self._panel_angles = rear_panel_angles.astype(float)
+    def __init__(self, settings: dict):
+        geom = settings["properties"]
+        self.x_len = geom["length"]
+        self.y_width = geom["width"]
+        self.z_width = geom["height"]
+        self.panel_length = self.x_len if geom["panel_length"] is None else geom["panel_length"]
+        # self.panel_width = np.min(self.y_width, self.z_width) if not geom["panel_width"] == None else self.panel_width = geom["panel_width"]
+        self.panel_width = np.min(self.y_width, self.z_width) if geom["panel_width"] is None else geom["panel_width"]
+        # print(np.array(geom["panel_angles"]))
+        self._panel_angles = np.deg2rad(np.array(geom["panel_angles"]).astype(float))
+        # print(self._panel_angles)
         self.velocity = 1 # Dummy value
-        self.mass = 2 # (kg), dummy value
-        self.panel_mass = 0.2 # (kg), per panel
-
+        self.particle_velocity_vector_aero_frame = np.array([-self.velocity, 0, 0])
+        self.body_mass = geom["body_mass"]
+        self.panel_mass = geom["panel_mass"] # (kg), per panel
+        self.com = geom["center_of_mass"] if not geom["center_of_mass"] else np.array([-self.x_len/2, 0, 0])
+        if geom["inertia"] is not None:
+            self.autocalc_inertia = False
+            self._inertia = np.array(geom["inertia"])
+        else:
+            self.autocalc_inertia = True
+            self._inertia = None
 
         self._R_aero_to_body = np.eye(3) # Body orientation, to be updated externally
         self.panel_polygons = [None] * 10
@@ -117,14 +124,6 @@ class Satellite:
         self.panels: list[Panel | None] = [None] * 10
         self.panel_vertices = [np.ndarray] * 10
         self.shaded_area: float = 0
-        self.com: np.ndarray = np.array([x_len/2, 0, 0])
-
-        #TODO: may be unnecessarily expensive to run this
-        for idx, panel_angle in enumerate(self._panel_angles):
-            while panel_angle < 0 or panel_angle > 90:
-                ValueError("Panel angle must be between 0 and 90 degrees, but is " + str(panel_angle) + " degrees.")
-                panel_angle = float(input("Provide a new panel angle in degrees:"))
-            self._panel_angles[idx] = np.deg2rad(panel_angle)
 
         ######## CREATION OF BODY PANEL COORDINATES ########
         self.body_panel_centres = [
@@ -143,10 +142,10 @@ class Satellite:
             np.array([1, 0, 0]), np.array([1, 0, 0]), # point forward
         ]
         self.panel_hinges = [
-            np.array([-x_len, y_width / 2, 0]),  # left
-            np.array([-x_len, -y_width / 2, 0]),  # right
-            np.array([-x_len, 0, z_width / 2]),  # upper
-            np.array([-x_len, 0, -z_width / 2]),  # lower
+            np.array([-self.x_len, self.y_width / 2, 0]),  # left
+            np.array([-self.x_len, -self.y_width / 2, 0]),  # right
+            np.array([-self.x_len, 0, self.z_width / 2]),  # upper
+            np.array([-self.x_len, 0, -self.z_width / 2]),  # lower
         ]
         #TODO: There is likely room to make this code more succinct
         for idx, panel_center in enumerate(self.body_panel_centres):
@@ -162,12 +161,11 @@ class Satellite:
 
         ######## CREATION OF REAR PANEL COORDINATES, WITH ABILITY TO DETERMINE ANGLE PER PANEL ########
         self.create_rear_panels()
-        if not inertia:
+        if self._inertia is None:
+            self.calculate_inertia()
 
-        self._inertia = inertia
-
-        ######## CALCULATE PROJECTION PLANE WITH INCOMING PARTICLE VELOCITY VECTOR ########
-        self.particle_velocity_vector_b = self._R_aero_to_body @ np.array([-self.velocity, 0, 0])
+        ######## PROJECT SATELLITE ONTO NORMAL PLANE VELOCITY VECTOR ########
+        self.particle_velocity_vector_b = self._R_aero_to_body.T @ np.array([-self.velocity, 0, 0])
         self.shadow_projection_axis_system = [np.array([0, 1, 0]), np.array([0, 0, 1]), np.array([0, 0, 0])]
         self.project_panels()
 
@@ -190,13 +188,6 @@ class Satellite:
             panel.define_body_nodes(hinge_location)
             self.panels[6+idx] = panel
             self.panel_vertices[6 + idx] = panel.vertices_body_frame  # type: ignore
-        #TODO: Transplant to own function
-        # centres = np.zeros((10,3))
-        # total_surface_area = 0.0
-        # for idx, panel in enumerate(self.panels):
-        #     centres[idx,:] = panel.panel_area*panel.panel_center
-        #     total_surface_area += panel.panel_area
-        # self.com = np.sum(centres, axis=0)/total_surface_area
         return
 
 
@@ -216,7 +207,8 @@ class Satellite:
             self.panel_polygons.append(panel.projected_polygon(self.shadow_projection_axis_system))
         # Because the shadow area will matter to determine number of particles encountered
         self.shadow = extract_polygon(unary_union(self.panel_polygons))
-        # self.shadow = self.shadow)
+        # print(f"shadow: {self.shadow}")
+        # self.shadow = self.shadow
 
         vertices = np.array(self.shadow.exterior.coords[:-1], dtype=np.float32)  # type: ignore
         triangulated = earcut.triangulate_float32(vertices, np.array([len(vertices)], dtype=np.uint32))
@@ -229,7 +221,7 @@ class Satellite:
 
 
 
-    def generate_impacting_particle(self, particle_velocity_vectors: np.ndarray = None,
+    def generate_impacting_particles(self, particle_velocity_vectors: np.ndarray = None,
                                     n_particles: int = 1, method: str = "elastic") -> list[np.ndarray]:
         """
         Generate a single particle to impact the spacecraft body. As of 27/08/2025 not yet vectorised so that I can get
@@ -249,8 +241,6 @@ class Satellite:
         # Preallocate 3d impact points and impact registry array
         impact_points = np.zeros((10, n_particles, 3))
         impact_array = np.zeros((n_particles, 10), dtype=int)
-
-
         probs = self.shadow_triangle_areas / self.shaded_area
         # Choose a random triangle
         tri_idx = np.random.choice(len(self.shadow_triangle_coords), n_particles, p=probs)
@@ -281,7 +271,7 @@ class Satellite:
             dot = np.einsum('ij,ij->i', np.tile(panel.body_normal_vector, (n_particles,1)), particle_velocity_vectors)
             indices_of_particles_facing_this_panel = np.where(dot < 0)[0] # Whether current panel faces incoming particles
             if len(indices_of_particles_facing_this_panel) > 0:  # If this panel faces any particles at all
-                p0 = np.tile(np.squeeze(panel.panel_center), (len(indices_of_particles_facing_this_panel), 1))
+                p0 = np.tile(np.squeeze(panel.panel_center_body_frame), (len(indices_of_particles_facing_this_panel), 1))
                 n = np.tile(panel.body_normal_vector, (len(indices_of_particles_facing_this_panel), 1))
                 l = l[indices_of_particles_facing_this_panel]
                 l0 = l0[indices_of_particles_facing_this_panel]
@@ -303,7 +293,7 @@ class Satellite:
         distances = np.where(impact_array == 1, d, np.inf)  # Distances to panel if impact, else infinity
         indices_of_impacted_panels = np.argmin(distances, axis=1)  # Determine first panel to be hit by given particle
         impact_3D_coordinates_constr_frame = impact_points[indices_of_impacted_panels,np.arange(n_particles),:]  # Retrieve impact 3d coordinates per particle
-        return [indices_of_impacted_panels, impact_3D_coordinates_constr_frame, particle_velocity_vectors]
+        return [indices_of_impacted_panels, impact_3D_coordinates_constr_frame, particle_velocity_vectors, points_3d]
 
 
     def print_vertices(self):
@@ -311,32 +301,37 @@ class Satellite:
             print(nodes)
         return
 
-    def new_com(self):
-        """
-        Insert some calculator here to find the new center of mass
-        """
+    def calculate_com(self):
+        #TODO: Write out
+        # centres = np.zeros((10,3))
+        # total_surface_area = 0.0
+        # for idx, panel in enumerate(self.panels):
+        #     centres[idx,:] = panel.panel_area*panel.panel_center
+        #     total_surface_area += panel.panel_area
+        # self.com = np.sum(centres, axis=0)/total_surface_area
         self.com = np.array([0, 0, 0])
         return
 
     def calculate_inertia(self):
-        self._inertia = np.zeros((3,3))
-        body_inertia = self.mass / 12 * np.array([[self.y_width**2 + self.z_width**2, 0, 0],
-                                                  [0, self.x_len**2 + self.z_width**2, 0],
-                                                  [0, 0, self.x_len**2 + self.y_width**2]])
-        r_to_com = self.com - np.array([self.x_len / 2, 0, 0])
-        body_inertia += self.mass * (np.dot(r_to_com,r_to_com)*np.eye(3) - np.outer(r_to_com,r_to_com))
-        self._inertia += body_inertia
-        for idx, panel in enumerate(self.panels[6:10]):
-            panel_inertia = panel.mass / 12 * np.array([[panel.width**2, 0, 0],
-                                                        [0, panel.length**2, 0],
-                                                        [0, 0, panel.length**2 + panel.width**2]])
-            r_panel = np.array([panel.length/2,0,0])
-            panel_inertia += panel.mass * (np.dot(r_panel,r_panel)*np.eye(3) - np.outer(r_panel,r_panel))
-            panel_inertia_body_frame = panel.R_panel_to_body @ panel_inertia @ panel.R_panel_to_body.T
-            r_body = self.com - self.panel_hinges[idx]
-            panel_inertia_body_frame += panel.mass * (np.dot(r_body,r_body)*np.eye(3) - np.outer(r_body,r_body))
-            self._inertia += panel_inertia_body_frame
-        print(self._inertia)
+        if self.autocalc_inertia:
+            self._inertia = np.zeros((3,3))
+            body_inertia = self.body_mass / 12 * np.array([[self.y_width**2 + self.z_width**2, 0, 0],
+                                                      [0, self.x_len**2 + self.z_width**2, 0],
+                                                      [0, 0, self.x_len**2 + self.y_width**2]])
+            r_to_com = self.com - np.array([self.x_len / 2, 0, 0])
+            body_inertia += self.body_mass * (np.dot(r_to_com,r_to_com)*np.eye(3) - np.outer(r_to_com,r_to_com))
+            self._inertia += body_inertia
+            for idx, panel in enumerate(self.panels[6:10]):
+                panel_inertia = panel.mass / 12 * np.array([[panel.width**2, 0, 0],
+                                                            [0, panel.length**2, 0],
+                                                            [0, 0, panel.length**2 + panel.width**2]])
+                r_panel = np.array([panel.length/2,0,0])
+                panel_inertia += panel.mass * (np.dot(r_panel,r_panel)*np.eye(3) - np.outer(r_panel,r_panel))
+                panel_inertia_body_frame = panel.R_panel_to_body @ panel_inertia @ panel.R_panel_to_body.T
+                r_body = self.com - self.panel_hinges[idx]
+                panel_inertia_body_frame += panel.mass * (np.dot(r_body,r_body)*np.eye(3) - np.outer(r_body,r_body))
+                self._inertia += panel_inertia_body_frame
+        self.inertia_inv = np.linalg.inv(self._inertia)
 
     ###### RE-CALCULATE THE NORMAL PLANE WHEN THE VELOCITY VECTOR CHANGES #######
     #TODO: Under simulation the update may happen twice per timestep, wasting computational resources
@@ -345,9 +340,9 @@ class Satellite:
         return self._R_aero_to_body
 
     @R_aero_to_body.setter
-    def R_aero_to_body(self, new_C_a_b):
-        self._R_aero_to_body = new_C_a_b
-        self.particle_velocity_vector_b = new_C_a_b @ np.array([-self.velocity, 0, 0])
+    def R_aero_to_body(self, new_R_a_b):
+        self._R_aero_to_body = new_R_a_b
+        self.particle_velocity_vector_b = new_R_a_b.T @ np.array([-self.velocity, 0, 0])
         self.project_panels()
 
     ###### Make panels moveable during the simulation if wanted ######
@@ -357,10 +352,12 @@ class Satellite:
 
     @panel_angles.setter
     def panel_angles(self, new_panel_angles):
+        """Update panel angles in Satellite object, resulting in updating the projection and inertia."""
         self._panel_angles = np.deg2rad(new_panel_angles)
         self.create_rear_panels()
         self.project_panels()
         self.calculate_inertia()
+        #TODO: Inform Simulation object of new inertia, which is currently impossible
 
     def get_inertia(self):
         return self._inertia
@@ -368,19 +365,27 @@ class Satellite:
 
     ###### VISUALISE CUBESAT ######
     def visualise(self,
+                  show_center_of_mass: bool = True,
                   show_velocity_vector: bool = False,
                   show_panel_vectors: bool = False,
                   show_shadow_axis_system: bool = False,
+                  show_particle_vectors: bool = False,
                   highlight_nodes: bool = False,
                   impacts: np.ndarray = None,
-                  particle_vectors: list[np.ndarray] = None):
+                  particle_vectors: list[np.ndarray] = None,
+                  p_at_impact_vectors: np.ndarray = None,
+                  points_in_projection: np.ndarray = None,):
         """
+        :param show_center_of_mass:
         :param show_velocity_vector:
         :param show_panel_vectors:
+        :param show_shadow_axis_system:
+        :param show_particle_vectors:
         :param highlight_nodes:
         :param impacts:
         :param particle_vectors:
-        :param show_shadow_axis_system:
+        :param p_at_impact_vectors:
+        :param points_3d:
         :return:
         """
         fig = plt.figure()
@@ -392,15 +397,18 @@ class Satellite:
             if highlight_nodes:
                ax.scatter(panel[:, 0], panel[:, 1], panel[:, 2], color='r')
 
+        if show_center_of_mass:
+            ax.scatter(self.com[0],self.com[1],self.com[2],color='orange')
+
         if show_velocity_vector:
-            vel_vec = self.particle_velocity_vector_b / np.linalg.norm(self.particle_velocity_vector_b)
-            ax.quiver(0-vel_vec[0], 0-vel_vec[1], 0-vel_vec[2], vel_vec[0], vel_vec[1], vel_vec[2])
+            vel_vec = self.particle_velocity_vector_b / np.linalg.norm(self.particle_velocity_vector_b)/2
+            ax.quiver(0-vel_vec[0], 0-vel_vec[1], 0-vel_vec[2], vel_vec[0], vel_vec[1], vel_vec[2],color='black')
 
         if show_panel_vectors:
             for panel, nodes in zip(self.panels, self.panel_vertices):
                 center = nodes.mean(axis=0)
-                n_vec = panel.n / np.linalg.norm(panel.n) * 0.3
-                f_vec = panel.f / np.linalg.norm(panel.f) * 0.3
+                n_vec = panel.body_normal_vector / np.linalg.norm(panel.body_normal_vector) * 0.3
+                f_vec = panel.body_forward_vector / np.linalg.norm(panel.body_forward_vector) * 0.3
                 ax.quiver(center[0], center[1], center[2],
                           n_vec[0], n_vec[1], n_vec[2],
                           color='b', arrow_length_ratio=0.2, linewidth=2)
@@ -411,27 +419,33 @@ class Satellite:
                                 Line2D([0], [0], color='g', lw=2, label='Panel forward vector')]
             ax.legend(handles=legend_elements, loc="best")
 
-        if particle_vectors is not None and impacts is not None:
-            if len(particle_vectors) != len(impacts):
-                raise ValueError("Number of specified impacts and particle vectors must match")
-        if impacts is not None:  # Plot the impact locations of particles with an arrow indicating the particle direction
-            vec_x_dir, vec_y_dir, vec_z_dir = self.particle_velocity_vector_b / np.linalg.norm(self.particle_velocity_vector_b)
-            print(impacts.shape[0])
-            for idx in range(impacts.shape[0]):
-                impact_coords = impacts[idx,:]  #TODO: VECTORIZE
-                ax.scatter(impact_coords[0], impact_coords[1], impact_coords[2], marker='x', color='r')
-                if particle_vectors is not None:  # If the particles have a specified direction, overwrite
-                    particle_vector = particle_vectors[idx]
-                    vec_x_dir, vec_y_dir, vec_z_dir = particle_vector/np.linalg.norm(particle_vector)
-                ax.quiver(impact_coords[0] - vec_x_dir, impact_coords[1] - vec_y_dir, impact_coords[2] - vec_z_dir,
-                          vec_x_dir, vec_y_dir, vec_z_dir)
-
         if show_shadow_axis_system:  # Visualise the axis system basis generated for the 2D satellite shadow
             x_vec, y_vec, z_vec, origin = self.shadow_projection_axis_system
             axis_length = 0.5  # scale for visibility
             ax.quiver(*origin, *(x_vec * axis_length), color='darkred', arrow_length_ratio=0.2, linewidth=2)
             ax.quiver(*origin, *(y_vec * axis_length), color='darkgreen', arrow_length_ratio=0.2, linewidth=2)
             ax.quiver(*origin, *(z_vec * axis_length), color='darkblue', arrow_length_ratio=0.2, linewidth=2)
+
+        if particle_vectors is not None and impacts is not None:
+            if len(particle_vectors) != len(impacts):
+                raise ValueError("Number of specified impacts and particle vectors must match")
+        if impacts is not None:  # Plot the impact locations of particles with an arrow indicating the particle direction
+            vec_x_dir, vec_y_dir, vec_z_dir = self.particle_velocity_vector_b / np.linalg.norm(self.particle_velocity_vector_b)/5
+            for idx in range(impacts.shape[0]):
+                impact_coords = impacts[idx,:]  #TODO: VECTORIZE
+                ax.scatter(impact_coords[0], impact_coords[1], impact_coords[2], marker='x', color='r')
+                if particle_vectors is not None and show_particle_vectors is True:  # If the particles have a specified direction, overwrite
+                    particle_vector = particle_vectors[idx]
+                    vec_x_dir, vec_y_dir, vec_z_dir = particle_vector/np.linalg.norm(particle_vector)
+                    ax.quiver(impact_coords[0] - vec_x_dir, impact_coords[1] - vec_y_dir, impact_coords[2] - vec_z_dir,
+                              vec_x_dir, vec_y_dir, vec_z_dir)
+                if p_at_impact_vectors is not None:
+                    p_vector = p_at_impact_vectors[idx]
+                    vec_x_dir, vec_y_dir, vec_z_dir = p_vector*1e4
+                    ax.quiver(impact_coords[0], impact_coords[1], impact_coords[2],
+                              vec_x_dir, vec_y_dir, vec_z_dir)
+        if points_in_projection is not None:
+            ax.scatter(points_in_projection[:,0], points_in_projection[:,1], points_in_projection[:,2], marker='o', color='purple')
 
         ax.set_xlabel('Length (x)')
         ax.set_ylabel('Width (y)')

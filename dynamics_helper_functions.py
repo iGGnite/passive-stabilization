@@ -24,7 +24,17 @@ def eul_to_quat(euler_angles: np.ndarray) -> np.ndarray:
     return np.array([q0, q1, q2, q3])
 
 def q_update(q, omega_ib_b,dt):
-    dq = np.concatenate(([1.0], 0.5*omega_ib_b*dt))
+    theta = omega_ib_b*dt
+    n_theta = np.linalg.norm(theta)
+    dq = np.zeros(4)
+    if n_theta > 1E-4:
+        dq[0] = np.cos(n_theta/2)
+        dq[1:4] = theta.T/n_theta * np.sin(n_theta/2)
+    else:
+        dq[0] = 1
+        dq[1:4] = 0.5*omega_ib_b*dt
+
+    # print(dq)
     # print(f"dq: {dq}")
     # omega_vec = np.zeros(4)
     # omega_vec[1:] = omega_ib_b
@@ -58,3 +68,8 @@ def quat_to_CTM(quaternion):
                       [2*(q1*q3-q2*q0),         2*(q2*q3+q1*q0),         q0**2-q1**2-q2**2+q3**2],
                       ])
         return C
+
+def skew_symmetric(v):
+    return np.array([[0, -v[2], v[1]],
+                     [v[2], 0, -v[0]],
+                     [-v[1], v[0], 0]])
