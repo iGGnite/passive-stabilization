@@ -57,6 +57,7 @@ class PassiveStabilization:
         self.inertia_inv = np.linalg.inv(self.inertia)
 
     def run_simulation(self,visualise_each_timestep=False):
+        start = time()
         time_points = np.arange(0, self.simulation_duration, self.dt)
         state = np.zeros((len(time_points), 8))
         state[:, 0] = time_points
@@ -67,6 +68,8 @@ class PassiveStabilization:
             if np.linalg.norm(self.omega_ib_b) > 2*np.pi:
                 print(f"Angular rate exceeds 1 full rotation per second at t: {t}s")
                 return state[:t_idx,:]
+        stop = time()
+        print(f"Simulation took {stop - start} seconds for {len(time_points)} timesteps, or {(stop - start)/len(time_points)} s/step")
         return state
 
 

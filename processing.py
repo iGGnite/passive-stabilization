@@ -83,8 +83,8 @@ def animate_rotations(sat, state, time=None, ):
             panel_collection = Poly3DCollection(vertices, facecolors='skyblue', edgecolors='k', linewidths=.5,
                                                 alpha=0.3)
             ax.add_collection3d(panel_collection)
-        for vec, color in zip(R.T, ['r', 'g', 'b']):
-            ax.quiver(0, 0, 0, *vec/2, color=color)
+        # for vec, color in zip(R.T, ['r', 'g', 'b']):
+        #     ax.quiver(0, 0, 0, *vec/2, color=color)
         ax.set_title(f"Time: {time[frame]:.2f}s")
 
     ani = FuncAnimation(fig, update, frames=int(len(time)/sample), interval=50)
