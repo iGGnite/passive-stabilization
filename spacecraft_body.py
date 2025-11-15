@@ -278,6 +278,10 @@ class Satellite:
         impact_points = np.zeros((10, n_particles, 3))
         impact_array = np.zeros((n_particles, 10), dtype=int)
         points = np.random.uniform(-self.max_dist_from_com, self.max_dist_from_com, 2 * n_particles).reshape(n_particles, 2)
+        # r = self.max_dist_from_com * np.sqrt(np.random.uniform(size=n_particles))
+        # theta = np.random.uniform(size=n_particles) * 2 * np.pi
+        # points = np.vstack((r * np.cos(theta), r * np.sin(theta))).T
+
         x_shadow, y_shadow, v_particle, orig = self.shadow_projection_axis_system
         points_3d = (points[:,0] * x_shadow[:,None] + points[:,1] * y_shadow[:,None]).T + orig
 
@@ -290,7 +294,10 @@ class Satellite:
         d = np.full((n_particles, 10), np.nan) #NOTE: Number of panels is hard-coded to be 10
         for idx, panel in enumerate(self.panels):  # We check per panel where particles cross their infinite plane
             dot = np.einsum('ij,ij->i', np.tile(panel.body_normal_vector, (n_particles,1)), particle_velocity_vectors)
-            indices_of_particles_facing_this_panel = np.where(dot < 0)[0] # Whether current panel faces incoming particles
+            if idx < 6:
+                indices_of_particles_facing_this_panel = np.where(dot < 0)[0] # Whether current panel faces incoming particles
+            else: # Rear panels face each particle from either side
+                indices_of_particles_facing_this_panel = np.arange(n_particles)
             if len(indices_of_particles_facing_this_panel) > 0:  # If this panel faces any particles at all
                 ## Construct infinite plane
                 p0 = np.tile(np.squeeze(panel.panel_center_body_frame), (len(indices_of_particles_facing_this_panel), 1))

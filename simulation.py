@@ -81,14 +81,14 @@ class PassiveStabilization:
         swept_volume = self.sat.max_dist_from_com ** 2 * self.particle_velocity * self.dt  # Volume of space swept out by vehicle in timestep dt
         n_particles = int(self.particles_per_cubic_meter * swept_volume)
         # self.sat.generate_impacting_particles_v2(n_particles=n_particles)
-        print(f"n_particles: {n_particles} in this time step")
+        # print(f"n_particles: {n_particles} in this time step")
         impact_panel_indices, impact_coordinates, particle_velocity_vectors, points_in_projection = (
             self.sat.generate_impacting_particles_v2(n_particles=n_particles))
 
         d_p, d_L, ps = self.calculate_momentum_exchange(impact_panel_indices=impact_panel_indices,
                                          impact_coordinates=impact_coordinates,
                                          impact_type=impact_type)
-        print(ps.shape)
+        # print(ps.shape)
         # #TODO: Do something with the linear momentum change for orbital decay and such
         torque = d_L/self.dt
         omega_ib_b_dot = self.inertia_inv.dot(torque - np.cross(self.omega_ib_b,self.inertia @ self.omega_ib_b))
@@ -102,7 +102,7 @@ class PassiveStabilization:
             self.visualise_3d(show_velocity_vector=True,
                               impacts=impact_coordinates,
                               p_at_impacts=ps,
-                              points_in_projection=points_in_projection,)
+                              points_in_projection=None,)
 
 
 
