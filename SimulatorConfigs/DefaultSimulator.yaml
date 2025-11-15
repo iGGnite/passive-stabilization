@@ -5,7 +5,7 @@ simulator_settings:
   runtime: 3600  # s
   impact_type: elastic #
   atmospheric_density: 1.0e-9  # kg/m^3
-  particle_mass: 1.0e-10  # kg
+  particle_mass: 1.0e-11  # kg
 state:
   altitude: 500e3  # m
   position: # Coordinates in inertial frame

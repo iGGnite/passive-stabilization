@@ -104,7 +104,7 @@ class Satellite:
         else:
             self.autocalc_inertia = True
             self._inertia = None
-        self.calc_center_of_pressure()
+        self.calc_geometric_center()
 
         self._R_aero_to_body = np.eye(3) # Body orientation, to be updated externally
         self.panel_polygons = [None] * 10
@@ -155,7 +155,7 @@ class Satellite:
         self.create_rear_panels()
         if self._inertia is None:
             self.calculate_inertia()
-        com_to_vertex_vector = np.array(self.panel_vertices).reshape(-1,3) - self.center_of_pressure
+        com_to_vertex_vector = np.array(self.panel_vertices).reshape(-1,3) - self.geometric_center
         # print(np.linalg.norm(com_to_vertex_vector,axis=0))
         self.max_dist_from_com = np.max(np.linalg.norm(com_to_vertex_vector,axis=1))
 
@@ -189,7 +189,7 @@ class Satellite:
     def project_panels(self):
         velocity_unit_vector_b = self.particle_velocity_vector_b / np.linalg.norm(self.particle_velocity_vector_b)
         dummy_vector = np.eye(3)[np.argmin(np.abs(velocity_unit_vector_b))]  # help construct projection plane
-        origin = self.center_of_pressure
+        origin = self.geometric_center
         x = np.cross(velocity_unit_vector_b, dummy_vector)
         x /= np.linalg.norm(x)
         y = np.cross(velocity_unit_vector_b,x)  # Crucial order to have a right-handed coordinate system!
@@ -341,9 +341,9 @@ class Satellite:
         self.com = np.array([0, 0, 0])
         return
 
-    def calc_center_of_pressure(self):
+    def calc_geometric_center(self):
         x = -(self.x_len + self.panel_length*max(np.cos(self._panel_angles)))/2
-        self.center_of_pressure = np.array([x, 0, 0])
+        self.geometric_center = np.array([x, 0, 0])
         return
 
     def calculate_inertia(self):
@@ -390,7 +390,7 @@ class Satellite:
         self._panel_angles = np.deg2rad(new_panel_angles)
         self.create_rear_panels()
         # For changing angle, re-calculate cross-section of encountered atmosphere (fewer resources OR avoiding panels outside area of incoming particles)
-        self.calc_center_of_pressure()
+        self.calc_geometric_center()
         self.project_panels()
         self.calculate_inertia()
         #TODO: Inform Simulation object of new inertia
