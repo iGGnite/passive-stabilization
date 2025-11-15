@@ -51,7 +51,7 @@ class PassiveStabilization:
             sat_config = load(f, Loader=CLoader)
         self.sat = Satellite(sat_config)
         self.sat.velocity = self.particle_velocity
-        self.sat.R_ = quat_to_CTM(self._inertial_to_body_quat)
+        self.sat.R_aero_to_body = self.R_inertial_to_body  # TODO: Distinguish aero and inertial frames = quat_to_CTM(self._inertial_to_body_quat)
         self.com = self.sat.com
         self.inertia = self.sat.get_inertia()
         self.inertia_inv = np.linalg.inv(self.inertia)
@@ -78,16 +78,18 @@ class PassiveStabilization:
                           visualise_2d=False,
                           particle_velocity_vector=None,
                           impact_type: str = "elastic"):
-        swept_volume = self.sat.shaded_area * self.particle_velocity * self.dt  # Volume of space swept out by vehicle in timestep dt
+        swept_volume = self.sat.max_dist_from_com ** 2 * self.particle_velocity * self.dt  # Volume of space swept out by vehicle in timestep dt
         n_particles = int(self.particles_per_cubic_meter * swept_volume)
-        # print(f"n_particles: {n_particles} in this time step")
+        # self.sat.generate_impacting_particles_v2(n_particles=n_particles)
+        print(f"n_particles: {n_particles} in this time step")
         impact_panel_indices, impact_coordinates, particle_velocity_vectors, points_in_projection = (
-            self.sat.generate_impacting_particles(n_particles=n_particles))
+            self.sat.generate_impacting_particles_v2(n_particles=n_particles))
 
         d_p, d_L, ps = self.calculate_momentum_exchange(impact_panel_indices=impact_panel_indices,
                                          impact_coordinates=impact_coordinates,
                                          impact_type=impact_type)
-        #TODO: Do something with the linear momentum change for orbital decay and such
+        print(ps.shape)
+        # #TODO: Do something with the linear momentum change for orbital decay and such
         torque = d_L/self.dt
         omega_ib_b_dot = self.inertia_inv.dot(torque - np.cross(self.omega_ib_b,self.inertia @ self.omega_ib_b))
         self.omega_ib_b += omega_ib_b_dot*self.dt
@@ -101,6 +103,8 @@ class PassiveStabilization:
                               impacts=impact_coordinates,
                               p_at_impacts=ps,
                               points_in_projection=points_in_projection,)
+
+
 
     def calculate_momentum_exchange(self,
                                     impact_panel_indices: list[int] = None,
