@@ -15,7 +15,7 @@ properties:
   body_mass: 4 # kg
   panel_mass: 0.1 # kg
   center_of_mass: # vector from front tip of S/C
-    - 0 # m
+    - -0.17 # m
     - 0 # m
     - 0 # m
   inertia: null # Estimate automatically if: null

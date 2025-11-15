@@ -116,16 +116,10 @@ class PassiveStabilization:
         if particle_velocity_vectors is None:
             particle_velocity_vectors = np.tile(self.v_particle_body_frame, (n_particles,1))
         particle_momentum_vectors = particle_velocity_vectors * self.particle_mass
-        if impact_type == "elastic":  #TODO: Likely slows down simulation unnecessarily. Instead make alpha part of simulation config file
-            alpha = 2
-        elif impact_type == "inelastic" or impact_type == "absorbed":
-            alpha = 1
-        else:
-            raise ValueError("Invalid impact type, choose either 'elastic' or 'inelastic'")
         panel_normals = all_panel_normals[impact_panel_indices]
         p_normal_to_panel = (np.einsum('ij,ij->i', particle_momentum_vectors, panel_normals)[:,None]*
                              panel_normals)
-        linear_momentum_transfer = alpha * np.sum(p_normal_to_panel, axis=0)
+        linear_momentum_transfer = self.impact_type * np.sum(p_normal_to_panel, axis=0)
 
         total_angular_momentum = np.sum(np.cross(impact_moment_arms, p_normal_to_panel),axis=0)
         # print(f"total_linear_momentum (inertial): {total_linear_momentum}")

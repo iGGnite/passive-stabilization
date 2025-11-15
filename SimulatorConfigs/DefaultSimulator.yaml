@@ -4,7 +4,7 @@ simulator_settings:
   timestep: 0.1  # s
   runtime: 3600  # s
   impact_type: elastic #
-  atmospheric_density: 2.0e-9  # kg/m^3
+  atmospheric_density: 1.0e-9  # kg/m^3
   particle_mass: 1.0e-10  # kg
 state:
   altitude: 500e3  # m
@@ -15,7 +15,7 @@ state:
   attitude: # Euler angles (currently in inertial frame, which is for now identical to the aerodynamic frame)
     - 0 # deg
     - 0 # deg
-    - 10 # deg
+    - 30 # deg
   velocity: 7500  # m/s
   rotation_rates:
     - 0 # deg/s
