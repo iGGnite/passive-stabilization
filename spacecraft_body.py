@@ -44,8 +44,6 @@ class Panel:
         self.width = width
         self.body_normal_vector = normal_vector
         self.body_forward_vector = forward_vector
-        # self.body_normal_vector = np.array
-        # self.body_forward_vector = np.array
         self.vertices_body_frame = np.array
         self.polygon = Polygon
         self.panel_area = self.length * self.width
@@ -65,10 +63,6 @@ class Panel:
                                                         self.panel_normal_vector,
                                                         np.cross(self.panel_normal_vector, self.panel_forward_vector)))).T
         self.R_panel_to_body = body_frame_basis_vectors @ panel_frame_basis_vectors.T
-
-        # self.body_normal_vector = self.R_panel_to_body @ self.panel_normal_vector
-        # self.body_forward_vector = self.R_panel_to_body @ self.panel_forward_vector
-        # self.panel_center = np.ndarray
         if body:  # Rotate about centre of panel (NOTE: potential flaw if body panels not perpendicular)
             self.vertices_body_frame = (self.R_panel_to_body @ self.vertices_panel_frame.T).T
         if not body:  # Rotate around hinge point (hinge point at origin)
@@ -110,6 +104,7 @@ class Satellite:
         else:
             self.autocalc_inertia = True
             self._inertia = None
+        self.calc_center_of_pressure()
 
         self._R_aero_to_body = np.eye(3) # Body orientation, to be updated externally
         self.panel_polygons = [None] * 10
@@ -160,7 +155,7 @@ class Satellite:
         self.create_rear_panels()
         if self._inertia is None:
             self.calculate_inertia()
-        com_to_vertex_vector = np.array(self.panel_vertices).reshape(-1,3) - self.com
+        com_to_vertex_vector = np.array(self.panel_vertices).reshape(-1,3) - self.center_of_pressure
         # print(np.linalg.norm(com_to_vertex_vector,axis=0))
         self.max_dist_from_com = np.max(np.linalg.norm(com_to_vertex_vector,axis=1))
 
@@ -192,13 +187,9 @@ class Satellite:
 
 
     def project_panels(self):
-        # print(f"Project panels called")
-        self.shadow_triangle_areas = []
-        self.panel_polygons = []
         velocity_unit_vector_b = self.particle_velocity_vector_b / np.linalg.norm(self.particle_velocity_vector_b)
-        # print(f"Ran shadow projection axis system for {velocity_unit_vector_b}")
         dummy_vector = np.eye(3)[np.argmin(np.abs(velocity_unit_vector_b))]  # help construct projection plane
-        origin = self.com
+        origin = self.center_of_pressure
         x = np.cross(velocity_unit_vector_b, dummy_vector)
         x /= np.linalg.norm(x)
         y = np.cross(velocity_unit_vector_b,x)  # Crucial order to have a right-handed coordinate system!
@@ -350,6 +341,11 @@ class Satellite:
         self.com = np.array([0, 0, 0])
         return
 
+    def calc_center_of_pressure(self):
+        x = -(self.x_len + self.panel_length*max(np.cos(self._panel_angles)))/2
+        self.center_of_pressure = np.array([x, 0, 0])
+        return
+
     def calculate_inertia(self):
         if self.autocalc_inertia:
             self._inertia = np.zeros((3,3))
@@ -393,9 +389,11 @@ class Satellite:
         """Update panel angles in Satellite object, resulting in updating the projection and inertia."""
         self._panel_angles = np.deg2rad(new_panel_angles)
         self.create_rear_panels()
+        # For changing angle, re-calculate cross-section of encountered atmosphere (fewer resources OR avoiding panels outside area of incoming particles)
+        self.calc_center_of_pressure()
         self.project_panels()
         self.calculate_inertia()
-        #TODO: Inform Simulation object of new inertia, which is currently impossible
+        #TODO: Inform Simulation object of new inertia
 
     def get_inertia(self):
         return self._inertia
