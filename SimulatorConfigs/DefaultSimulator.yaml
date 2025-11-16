@@ -1,11 +1,11 @@
 ---
 # This file specifies the default simulator settings
 simulator_settings:
-  timestep: 0.1  # s
-  runtime: 5000  # s
-  impact_type: elastic #
-  atmospheric_density: 3.0e-9  # kg/m^3
-  particle_mass: 3.0e-10  # kg
+  timestep: 5  # s
+  runtime: 100000  # s
+  impact_type: elastic # elastic transfers more momentum, factor 2 of inelastic
+  atmospheric_density: 7.7e-16  # g/cm^3
+  particle_mass: 5.0e-12  # kg
 state:
   altitude: 500e3  # m
   position: # Coordinates in inertial frame
@@ -15,9 +15,9 @@ state:
   attitude: # Euler angles (currently in inertial frame, which is for now identical to the aerodynamic frame)
     - 0 # deg
     - 0 # deg
-    - 160 # deg
+    - 0.00001 # deg
   velocity: 7500  # m/s
   rotation_rates:
     - 0 # deg/s
-    - 0.05 # deg/s
+    - 0 # deg/s
     - 0 # deg/s

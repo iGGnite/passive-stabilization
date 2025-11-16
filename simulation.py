@@ -40,7 +40,7 @@ class PassiveStabilization:
         self.R_inertial_to_body = quat_to_CTM(self._inertial_to_body_quat)
         self.v_particle_inertial_frame = np.array([-self.particle_velocity, 0, 0])
         self.v_particle_body_frame = self.R_inertial_to_body @ self.v_particle_inertial_frame
-        self.particles_per_cubic_meter = self.air_density / self.particle_mass
+        self.particles_per_cubic_meter = self.air_density * 1000 / self.particle_mass
 
         self.inertia = None
         self.inertia_inv = None
@@ -56,39 +56,37 @@ class PassiveStabilization:
         self.inertia = self.sat.get_inertia()
         self.inertia_inv = np.linalg.inv(self.inertia)
 
-    def run_simulation(self,visualise_each_timestep=False):
+    def run_simulation(self,visualise_timesteps=False):
         start = time()
         time_points = np.arange(0, self.simulation_duration, self.dt)
-        state = np.zeros((len(time_points), 8))
+        state = np.zeros((len(time_points), 11))
+        impact_history = np.zeros((len(time_points), 3))
         state[:, 0] = time_points
+        impact_history[:, 0] = time_points
         for t_idx, t in enumerate(time_points):
-            self.simulate_timestep(visualise_timestep=visualise_each_timestep)
-            state[t_idx, 1:4] = self.omega_ib_b
-            state[t_idx, 4:8] = self._inertial_to_body_quat
+            self.step = t_idx
+            state[t_idx, 1:], impact_history[t_idx, 1:] = self.simulate_timestep(visualise_timestep=visualise_timesteps)
             if np.linalg.norm(self.omega_ib_b) > 2*np.pi:
                 print(f"Angular rate exceeds 1 full rotation per second at t: {t}s")
                 return state[:t_idx,:]
         stop = time()
-        print(f"Simulation took {stop - start} seconds for {len(time_points)} timesteps, or {(stop - start)/len(time_points)} s/step")
-        return state
+        print(f"Simulation took {round(stop - start,5)}s for {len(time_points)} timesteps, or {round((stop - start)/len(time_points),6)} s/step")
+        return state, impact_history
 
 
     def simulate_timestep(self,
                           visualise_timestep=False,
-                          visualise_2d=False,
-                          particle_velocity_vector=None,
-                          impact_type: str = "elastic"):
-        swept_volume = self.sat.max_dist_from_com ** 2 * self.particle_velocity * self.dt  # Volume of space swept out by vehicle in timestep dt
+                          particle_velocity_vector=None):
+        swept_volume = self.sat.max_dist_from_geom_center * self.sat.max_dist_from_long_axis * self.particle_velocity * self.dt  # Volume of space swept out by vehicle in timestep dt
+        # swept_volume = self.sat.max_dist_from_geom_center **2 * self.particle_velocity * self.dt  # Volume of space swept out by vehicle in timestep dt
         n_particles = int(self.particles_per_cubic_meter * swept_volume)
-        # self.sat.generate_impacting_particles_v2(n_particles=n_particles)
         # print(f"n_particles: {n_particles} in this time step")
         impact_panel_indices, impact_coordinates, particle_velocity_vectors, points_in_projection = (
-            self.sat.generate_impacting_particles_v2(n_particles=n_particles))
+            self.sat.generate_impacting_particles(n_particles=n_particles))
 
-        d_p, d_L, ps = self.calculate_momentum_exchange(impact_panel_indices=impact_panel_indices,
-                                         impact_coordinates=impact_coordinates,
-                                         impact_type=impact_type)
-        # print(ps.shape)
+        d_p, d_L, n_impacts = self.calculate_momentum_exchange(impact_panel_indices=impact_panel_indices,
+                                         impact_coordinates=impact_coordinates)
+        # print(ps.shape[0])
         # #TODO: Do something with the linear momentum change for orbital decay and such
         torque = d_L/self.dt
         omega_ib_b_dot = self.inertia_inv.dot(torque - np.cross(self.omega_ib_b,self.inertia @ self.omega_ib_b))
@@ -98,19 +96,19 @@ class PassiveStabilization:
                      self.omega_ib_b, # omega_ib_i seen in b-frame
                      self.dt))
 
-        if visualise_timestep and self.step % int(5/self.dt) == 0:
+        if visualise_timestep and self.step % int(100/self.dt) == 0:
             self.visualise_3d(show_velocity_vector=True,
                               impacts=impact_coordinates,
-                              p_at_impacts=ps,
+                              p_at_impacts=None,
                               points_in_projection=None,)
+        return np.hstack((self._inertial_to_body_quat, self.omega_ib_b, torque)), np.array([n_particles, n_impacts])
 
 
 
     def calculate_momentum_exchange(self,
                                     impact_panel_indices: list[int] = None,
                                     impact_coordinates: np.ndarray = None,
-                                    particle_velocity_vectors: np.ndarray = None,
-                                    impact_type: str = "elastic"):
+                                    particle_velocity_vectors: np.ndarray = None):
         n_particles = len(impact_panel_indices)
         all_panel_normals = np.zeros((10, 3))
         #TODO: Consider constant velocity for all particles to speed up computation
@@ -132,7 +130,7 @@ class PassiveStabilization:
         #                          2*np.einsum('ij,ij->i', particle_velocity_vectors, panel_normals)[:,None]*
         #                          panel_normals)
         #TODO: Implement second collision check/simulation, using particle_velocity_out
-        return linear_momentum_transfer, total_angular_momentum, p_normal_to_panel
+        return linear_momentum_transfer, total_angular_momentum, p_normal_to_panel.shape[0]
 
 
 

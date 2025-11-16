@@ -8,10 +8,10 @@ properties:
   panel_length: 0.34 # m
   panel_width: 0.10 # m
   panel_angles:
-    - 30
-    - 30
-    - 30
-    - 30
+    - 30 # deg
+    - 30 # deg
+    - 30 # deg
+    - 30 # deg
   body_mass: 4 # kg
   panel_mass: 0.1 # kg
   center_of_mass: # vector from front tip of S/C

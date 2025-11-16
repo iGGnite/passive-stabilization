@@ -2,14 +2,11 @@ import numpy as np
 
 def quat_multiply(p, q):
     output_q = np.zeros(4)
-    # output_q[0] = q[0]*p[0] - np.dot(q[1:], p[1:])
-    # output_q[1:] = q[0]*p[1:] + p[0]*q[1:] + np.cross(q[1:], p[1:])
-
-    output_q = [p[0]*q[0]-p[1]*q[1]-p[2]*q[2]-p[3]*q[3],
+    output_q = np.array([p[0]*q[0]-p[1]*q[1]-p[2]*q[2]-p[3]*q[3],
                 p[0]*q[1]+p[1]*q[0]+p[2]*q[3]-p[3]*q[2],
                 p[0]*q[2]-p[1]*q[3]+p[2]*q[0]+p[3]*q[1],
                 p[0]*q[3]+p[1]*q[2]-p[2]*q[1]+p[3]*q[0],
-    ]
+    ])
     return output_q
 
 def eul_to_quat(euler_angles: np.ndarray) -> np.ndarray:
@@ -25,21 +22,21 @@ def eul_to_quat(euler_angles: np.ndarray) -> np.ndarray:
 
 def q_update(q, omega_ib_b,dt):
     theta = omega_ib_b*dt
-    n_theta = np.linalg.norm(theta)
+    n_theta = np.linalg.norm(theta)  # If the rotation rate is too large, the small angle approximation does not hold
+    # print(f"n_theta = {n_theta} rad/timestep")
     dq = np.zeros(4)
-    if n_theta > 1E-4:
+    if n_theta > 5E-3:
         dq[0] = np.cos(n_theta/2)
         dq[1:4] = theta.T/n_theta * np.sin(n_theta/2)
+        q_out = quat_multiply(q, dq)
+        return q_out
     else:
         dq[0] = 1
-        dq[1:4] = 0.5*omega_ib_b*dt
+        dq[1:4] = 0.5*theta
+        q_out = quat_multiply(q,dq)
+        return q_out / np.linalg.norm(q_out)
 
-    # print(dq)
-    # print(f"dq: {dq}")
-    # omega_vec = np.zeros(4)
-    # omega_vec[1:] = omega_ib_b
-    q_out = quat_multiply(q,dq)
-    return q_out / np.linalg.norm(q_out)
+
 
 def quat_to_eul(quaternion):
     if quaternion.size > 4:
