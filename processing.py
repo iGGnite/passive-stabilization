@@ -107,8 +107,20 @@ def plot_torque(state: np.ndarray):
         a.set_ylabel('Torque (Nm)')
     fig.supxlabel('Time (s)')
     fig.legend()
-    plt.show()
 
+
+def plot_kinematics(state: np.ndarray):
+    time = state[:,0]
+    kinematics = state[:,11:14]
+    fig, ax = plt.subplots(4, sharex=True)
+    fig.suptitle('Instantaneous Kinematics')
+    ax[0].plot(time, kinematics[:,0], color='tab:blue',   label='Kinematic dev body x axis')
+    ax[1].plot(time, kinematics[:,1], color='tab:orange', label='Kinematic dev y axis')
+    ax[2].plot(time, kinematics[:,2], color='tab:green', label='Kinematic dev z axis')
+    for a in ax:
+        a.set_ylabel('Torque (Nm)')
+    fig.supxlabel('Time (s)')
+    fig.legend()
 
 def plot_impacts(impacts):
     time = impacts[:,0]

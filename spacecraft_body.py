@@ -191,13 +191,12 @@ class Satellite:
 
     def project_panels(self):
         velocity_unit_vector_b = self.particle_velocity_vector_b / np.linalg.norm(self.particle_velocity_vector_b)
-        x_body = np.array([1,0,0]) #if velocity_unit_vector_b[0] > -1+1e-8 else np.array([0,1,0])
         origin = self.geometric_center
-        x = np.cross(np.cross(velocity_unit_vector_b, x_body),velocity_unit_vector_b)
+        x = np.cross(np.cross(velocity_unit_vector_b, np.array([1,0,0])),velocity_unit_vector_b) # Put x_shadow as close as possible to x_body
         x /= np.linalg.norm(x)
         y = np.cross(velocity_unit_vector_b,x)  # Crucial order to have a right-handed coordinate system!
         y /= np.linalg.norm(y)
-        self.shadow_projection_axis_system = [x, y, velocity_unit_vector_b, origin] # x, y, z + origin defined in body frame
+        self.shadow_projection_axis_system = [x, y, velocity_unit_vector_b, origin] # shadow x, y, (z) + origin defined in body frame
         return
 
     def generate_impacting_particles(self, particle_velocity_vectors: np.ndarray = None, n_particles: int = 1):
@@ -205,7 +204,6 @@ class Satellite:
         impact_array = np.zeros((n_particles, 10), dtype=int)
         points_x = np.random.uniform(-self.max_dist_from_geom_center, self.max_dist_from_geom_center, n_particles)
         points_y = np.random.uniform(-self.max_dist_from_long_axis, self.max_dist_from_long_axis, n_particles)
-        # points_y = np.random.uniform(-self.max_dist_from_geom_center, self.max_dist_from_geom_center, n_particles)
         x_shadow, y_shadow, v_particle, orig = self.shadow_projection_axis_system
         points_3d = (points_x * x_shadow[:,None] + points_y * y_shadow[:,None]).T + orig
 
@@ -246,8 +244,7 @@ class Satellite:
                 else:  # Rear panels can be hit either from the front or back
                     panel_impact = np.logical_or(
                         np.all(direction > 0, axis=1),
-                        np.all(direction < 0, axis=1)
-                    )
+                        np.all(direction < 0, axis=1))
                 impact_array[:, idx] = panel_impact
         distances = np.where(impact_array == 1, d, np.inf)  # Distances to panel is registered if impacted, else it is infinity
         particle_indices = (np.arange(n_particles))[~np.all(np.isinf(distances), axis=1)]  # Get indices of particles which have at least one impact
@@ -273,6 +270,7 @@ class Satellite:
         return
 
     def calc_geometric_center(self):
+        """Determine the 'geometric center', which is meant to help minimise the size of the shadow plane"""
         self.geometric_center = np.array([-(self.x_len + self.panel_length*max(np.cos(self._panel_angles)))/2, 0, 0])
         return
 
@@ -295,6 +293,8 @@ class Satellite:
                 r_body = self.com - self.panel_hinges[idx]
                 panel_inertia_body_frame += panel.mass * (np.dot(r_body,r_body)*np.eye(3) - np.outer(r_body,r_body))
                 self._inertia += panel_inertia_body_frame
+        else:
+            raise ValueError("Inertia not meant to be calculated according to Satellite config file")
         self.inertia_inv = np.linalg.inv(self._inertia)
 
     ###### RE-CALCULATE THE NORMAL PLANE WHEN THE VELOCITY VECTOR CHANGES #######

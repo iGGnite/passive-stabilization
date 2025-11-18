@@ -23,6 +23,7 @@ class PassiveStabilization:
         self.simulation_duration = sim_settings["runtime"]  # Simulation time (s)
         self.air_density = sim_settings["atmospheric_density"]  # Air density (kg/m^3)
         self.particle_mass = sim_settings["particle_mass"] # Mass of single particle (kg)
+        self.n_particles = sim_settings["particle_number"] # Predetermined number of particles in a given timestep
         if sim_settings["impact_type"] == "elastic" or sim_settings["impact_type"] == 2:
             self.impact_type = 2
         elif sim_settings["impact_type"] == "inelastic" or sim_settings["impact_type"] == 1:
@@ -32,7 +33,10 @@ class PassiveStabilization:
 
         ######## LOAD INITIAL STATE ########
         self.altitude = state_init["altitude"]  # Altitude (m)
-        self._inertial_to_body_quat = eul_to_quat(np.deg2rad(np.array(state_init["attitude"])))
+        if state_init["attitude"][1] == 0 and state_init["attitude"][2] == 0: # if pitch and yaw are both exactly zero, sim breaks
+            self._inertial_to_body_quat = eul_to_quat(np.deg2rad(np.array(state_init["attitude"])+np.array([0,0,1e-10])))
+        else:
+            self._inertial_to_body_quat = eul_to_quat(np.deg2rad(np.array(state_init["attitude"])))
         self.particle_velocity = state_init["velocity"]  # Total velocity of incoming particles (m/s)
         self.omega_ib_b = np.deg2rad(np.array(state_init["rotation_rates"]))  # rad/s
 
@@ -59,16 +63,16 @@ class PassiveStabilization:
     def run_simulation(self,visualise_timesteps=False):
         start = time()
         time_points = np.arange(0, self.simulation_duration, self.dt)
-        state = np.zeros((len(time_points), 11))
+        state = np.zeros((len(time_points), 14))
         impact_history = np.zeros((len(time_points), 3))
         state[:, 0] = time_points
         impact_history[:, 0] = time_points
         for t_idx, t in enumerate(time_points):
             self.step = t_idx
             state[t_idx, 1:], impact_history[t_idx, 1:] = self.simulate_timestep(visualise_timestep=visualise_timesteps)
-            if np.linalg.norm(self.omega_ib_b) > 2*np.pi:
-                print(f"Angular rate exceeds 1 full rotation per second at t: {t}s")
-                return state[:t_idx,:]
+            # if np.linalg.norm(self.omega_ib_b) > 2*np.pi:
+            #     print(f"Angular rate exceeds 1 full rotation per second at t: {t}s")
+            #     return state[:t_idx,:]
         stop = time()
         print(f"Simulation took {round(stop - start,5)}s for {len(time_points)} timesteps, or {round((stop - start)/len(time_points),6)} s/step")
         return state, impact_history
@@ -77,32 +81,26 @@ class PassiveStabilization:
     def simulate_timestep(self,
                           visualise_timestep=False,
                           particle_velocity_vector=None):
-        swept_volume = self.sat.max_dist_from_geom_center * self.sat.max_dist_from_long_axis * self.particle_velocity * self.dt  # Volume of space swept out by vehicle in timestep dt
-        # swept_volume = self.sat.max_dist_from_geom_center **2 * self.particle_velocity * self.dt  # Volume of space swept out by vehicle in timestep dt
-        n_particles = int(self.particles_per_cubic_meter * swept_volume)
-        # print(f"n_particles: {n_particles} in this time step")
+        swept_mass = self.sat.max_dist_from_geom_center * self.sat.max_dist_from_long_axis * self.particle_velocity * self.dt*self.air_density  # Volume of space swept out by vehicle in timestep dt
+        self.particle_mass = swept_mass/self.n_particles
         impact_panel_indices, impact_coordinates, particle_velocity_vectors, points_in_projection = (
-            self.sat.generate_impacting_particles(n_particles=n_particles))
+            self.sat.generate_impacting_particles(n_particles=self.n_particles))
 
         d_p, d_L, n_impacts = self.calculate_momentum_exchange(impact_panel_indices=impact_panel_indices,
                                          impact_coordinates=impact_coordinates)
-        # print(ps.shape[0])
         # #TODO: Do something with the linear momentum change for orbital decay and such
         torque = d_L/self.dt
-        omega_ib_b_dot = self.inertia_inv.dot(torque - np.cross(self.omega_ib_b,self.inertia @ self.omega_ib_b))
+        kinematics = np.cross(self.omega_ib_b,self.inertia @ self.omega_ib_b)
+        omega_ib_b_dot = self.inertia_inv.dot(torque - kinematics)
         self.omega_ib_b += omega_ib_b_dot*self.dt
-        self.inertial_to_body_quat = (
-            q_update(self._inertial_to_body_quat,
-                     self.omega_ib_b, # omega_ib_i seen in b-frame
-                     self.dt))
+        self.inertial_to_body_quat = q_update(self._inertial_to_body_quat,self.omega_ib_b,self.dt)
 
         if visualise_timestep and self.step % int(100/self.dt) == 0:
             self.visualise_3d(show_velocity_vector=True,
                               impacts=impact_coordinates,
                               p_at_impacts=None,
                               points_in_projection=None,)
-        return np.hstack((self._inertial_to_body_quat, self.omega_ib_b, torque)), np.array([n_particles, n_impacts])
-
+        return np.hstack((self._inertial_to_body_quat, self.omega_ib_b, torque, -kinematics)), np.array([self.n_particles, n_impacts])
 
 
     def calculate_momentum_exchange(self,
@@ -124,8 +122,6 @@ class PassiveStabilization:
         linear_momentum_transfer = self.impact_type * np.sum(p_normal_to_panel, axis=0)
 
         total_angular_momentum = np.sum(np.cross(impact_moment_arms, p_normal_to_panel),axis=0)
-        # print(f"total_linear_momentum (inertial): {total_linear_momentum}")
-        # print(f"total_angular_momentum (inertial): {total_angular_momentum}")
         # particle_velocity_out = (particle_velocity_vectors -
         #                          2*np.einsum('ij,ij->i', particle_velocity_vectors, panel_normals)[:,None]*
         #                          panel_normals)
