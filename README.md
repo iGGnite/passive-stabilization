@@ -6,21 +6,21 @@ More information on the [Wiki](https://github.com/iGGnite/passive-stabilization/
 - Definition of CubeSat geometry, creating satellite object from config file
 - Automatic option to calculate of CubeSat inertia as a function of panel angle
 - Simulation of particles impacting CubeSat, found by generating particles in a plane normal to the direction of flight
-- Propagation of CubeSat attitude in time, currently limited to forward Euler
+- Propagation of CubeSat attitude in time
 
 ### Roadmap
 - [x] Enable satellite/simulation settings to be loaded from (custom) settings files
   - [x] File defining satellite geometry, mass, and inertia properties
-  - [x] File defining simulation 
-- [ ] Varying types of particle interactions beyond basic momentum exchange
-- [ ] Implementing integration schemes other than forward Euler
+  - [x] File defining simulation parameters, like timestep, duration, initial attitude, number of particles, and atmospheric density
+- [ ] Vary type of particle/plane interaction beyond elastic/inelastic momentum exchange
 - [ ] Improve performance
-  - [ ] Determine (through MC analysis), minimum number of particle impacts to mimic 'flow' 
-  - [ ] Sort particle impacts according to panels
-  - [x] Generate particles uniformly in plane normal to direction of flight
-- [ ] Adding orbital mechanics
-  - [ ] To consider particles' linear momentum for change in orbital parameters
-  - [ ] To vary direction of incoming particles over the course of multiple orbits
+  - [x] Generate particles uniformly in 'shadow plane' normal to direction of flight
+  - [x] Minimize size of 'shadow plane'
+  - [ ] Determine (through MC analysis), relation between time-step size, number of particles, and accuracy
+- [ ] Simulate orbital travel
+  - [ ] Vary direction of incoming particles over the course of multiple orbits
+  - [ ] Consider particles' linear momentum for change in orbital parameters
+(Far future)
 - [ ] Add ability to implement control systems, e.g.
   - [ ] Control system manipulating angles of individual panels, like airbrakes
-  - [ ] Internal active attitude control (reaction wheels?)
+  - [ ] Active attitude control (reaction wheels)
