@@ -108,7 +108,7 @@ class CubeSat:
         # self.particle_velocity_vector_aero_frame = np.array([-self.velocity, 0, 0])
         self.body_mass = geom["body_mass"]
         self.panel_mass = geom["panel_mass"]  # (kg), per panel
-        self.com = geom["center_of_mass"] if not geom["center_of_mass"] else np.array([-self.x_len / 2, 0, 0])
+        self.com = geom["center_of_mass"] if "center_of_mass" in geom else np.array([-self.x_len / 2, 0, 0])
         if geom["inertia"] is not None:
             self.autocalc_inertia = False
             self._inertia = np.array(geom["inertia"])
