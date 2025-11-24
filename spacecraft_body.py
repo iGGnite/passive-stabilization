@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from shapely.geometry import Polygon, MultiPolygon
-from shapely.set_operations import unary_union
+# from shapely.set_operations import unary_union
 
 from dynamics_helper_functions import quat_to_CTM
 
@@ -105,7 +105,7 @@ class CubeSat:
         self.panel_width = np.min(self.y_width, self.z_width) if geom["panel_width"] is None else geom["panel_width"]
         self._panel_angles = np.deg2rad(np.array(geom["panel_angles"]).astype(float))
         self.velocity = 1  # Dummy value
-        self.particle_velocity_vector_aero_frame = np.array([-self.velocity, 0, 0])
+        # self.particle_velocity_vector_aero_frame = np.array([-self.velocity, 0, 0])
         self.body_mass = geom["body_mass"]
         self.panel_mass = geom["panel_mass"]  # (kg), per panel
         self.com = geom["center_of_mass"] if not geom["center_of_mass"] else np.array([-self.x_len / 2, 0, 0])
@@ -119,21 +119,19 @@ class CubeSat:
 
         self._R_aero_to_body = np.eye(3)  # Body orientation, to be updated externally
         self.panel_polygons = [None] * 10
-        self.shadow: Polygon = None  # type: ignore
-        self.shadow_triangle_coords = None
-        self.shadow_triangle_areas: np.ndarray = None  # type: ignore
-        self.rear_forward_vectors: list[np.ndarray | None] = [None] * 4  # type: ignore
-        self.rear_normal_vectors: list[np.ndarray | None] = [None] * 4  # type: ignore
-        self.panels: list[Panel | None] = [None] * 10
-        self.panel_vertices = [np.ndarray] * 10
+        # self.shadow = None # Retired feature
+        # self.shadow_triangle_coords = None
+        # self.shadow_triangle_areas = None
+        self.rear_forward_vectors = []
+        self.rear_normal_vectors = []
+        self.panels = [None] * 10
+        self.panel_vertices = [None] * 10
 
         ######## CREATION OF BODY PANEL COORDINATES ########
         self.body_panel_centres = [
             np.array([0, 0, 0]), np.array([-self.x_len, 0, 0]),  # front, rear
-            np.array([-self.x_len / 2, self.y_width / 2, 0]), np.array([-self.x_len / 2, -self.y_width / 2, 0]),
-            # left, right
-            np.array([-self.x_len / 2, 0, self.z_width / 2]), np.array([-self.x_len / 2, 0, -self.z_width / 2]),
-            # top, bottom
+            np.array([-self.x_len / 2, self.y_width / 2, 0]), np.array([-self.x_len / 2, -self.y_width / 2, 0]), # left, right
+            np.array([-self.x_len / 2, 0, self.z_width / 2]), np.array([-self.x_len / 2, 0, -self.z_width / 2]), # top, bottom
         ]
         self.body_normal_vectors = [
             np.array([1, 0, 0]), np.array([-1, 0, 0]),  # point forward, backward
@@ -173,7 +171,7 @@ class CubeSat:
         self.max_dist_from_long_axis = np.max(np.linalg.norm(com_to_vertex_vector[:, 1:3], axis=1))
 
         ######## PROJECT CUBESAT ONTO NORMAL PLANE VELOCITY VECTOR ########
-        self.particle_velocity_vector_b = self._R_aero_to_body.T @ np.array([-self.velocity, 0, 0])
+        self.particle_velocity_vector_b = self._R_aero_to_body.T @ np.array([-self.velocity, 0, 1e-12]) # small value to avoid div by 0
         self.shadow_projection_axis_system = [np.array([0, 1, 0]), np.array([0, 0, 1]), np.array([0, 0, 0])]
         self.project_panels()
 
@@ -361,7 +359,7 @@ class CubeSat:
                   particle_vectors: list[np.ndarray] = None,
                   p_at_impact_vectors: np.ndarray = None,
                   points_in_projection: np.ndarray = None,
-                  projection_borders: bool = True, ):
+                  projection_borders: bool = False, ):
         """
         Function to create 3D plot of CubeSat. Very useful for debugging purposes.
 

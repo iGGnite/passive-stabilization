@@ -176,7 +176,7 @@ class PassiveStabilization:
             :type points_in_projection: np.ndarray
         :return:
         """
-        self.sat.visualise(show_velocity_vector=show_velocity_vector, impacts=impacts, show_shadow_axis_system=False,
+        self.sat.visualise(show_velocity_vector=False, impacts=None, show_shadow_axis_system=False,
                            p_at_impact_vectors=p_at_impacts, points_in_projection=points_in_projection)
         plt.show()
 

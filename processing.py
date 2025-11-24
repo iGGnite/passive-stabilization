@@ -4,6 +4,8 @@ from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.animation import FuncAnimation
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from spacecraft_body import CubeSat
+
 
 def plot_angular_rate(state):
     time = state[:,0]
@@ -32,10 +34,9 @@ def plot_attitude(state, quaternion = False):
         plt.ylabel('Quaternion (-)')
     else:
         euler_angles = np.rad2deg(quat_to_eul(quaternions))
-        # print(euler_angles.shape)
         plt.title('Euler angles')
         plt.plot(time, euler_angles[:,0])
-        plt.plot(time, euler_angles[:,1])
+        plt.plot(time, euler_angles[:,1], '-.')
         plt.plot(time, euler_angles[:,2], '--')
         plt.legend(['Roll','Pitch','Yaw'])
         plt.ylabel('Euler Angle (deg)')
@@ -58,8 +59,17 @@ def plot_angular_momentum(inertia, state: np.ndarray):
 
 
 
-def animate_rotations(sat, state, time=None, spf: int = 10):
-    time = state[:, 0] if time is None else time
+def animate_rotations(sat: CubeSat, state: np.ndarray, spf: int = 10):
+    """Animate orientation as a function of time
+
+    :param sat: Satellite object to be rendered
+        :type sat: CubeSat
+    :param state: State of the CubeSat object
+        :type state: np.ndarray
+    :param spf: Number of seconds jump between each frame, standard 10s
+        :type spf: int
+    """
+    time = state[:, 0]
     steps_per_second = int(spf/(time[1] - time[0]))
     rotations = quat_to_CTM(state[:, 1:5])  # shape: (N, 3, 3)
     fig = plt.figure()
