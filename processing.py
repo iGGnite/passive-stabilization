@@ -122,13 +122,13 @@ def plot_torque(state: np.ndarray):
 def plot_kinematics(state: np.ndarray):
     time = state[:,0]
     kinematics = state[:,11:14]
-    fig, ax = plt.subplots(4, sharex=True)
+    fig, ax = plt.subplots(3, sharex=True)
     fig.suptitle('Instantaneous Kinematics')
-    ax[0].plot(time, kinematics[:,0], color='tab:blue',   label='Kinematic dev body x axis')
+    ax[0].plot(time, kinematics[:,0], color='tab:blue',   label='Kinematic  x axis')
     ax[1].plot(time, kinematics[:,1], color='tab:orange', label='Kinematic dev y axis')
     ax[2].plot(time, kinematics[:,2], color='tab:green', label='Kinematic dev z axis')
     for a in ax:
-        a.set_ylabel('Torque (Nm)')
+        a.set_ylabel('Torque-like (Nm)')
     fig.supxlabel('Time (s)')
     fig.legend()
 
@@ -137,6 +137,7 @@ def plot_impacts(impacts):
     gen, imp = impacts[:,1], impacts[:,2]
 
     fig, ax1 = plt.subplots()
+    fig.suptitle('Generated particles and number of impacts')
     ax1.plot(time, gen, label='Generated')
     ax1.plot(time, imp, label='Impacted')
     ax1.set_xlabel('Time (s)')
