@@ -3,6 +3,12 @@ Equations related to converting between attitude representations and propagation
 """
 
 import numpy as np
+# WGS 84 defined coordinate system
+a = 6378137
+f_inverse = 298.257223563
+e_squared = 6.69437999014e-3
+GM = 3.986004418e14
+
 
 def quat_multiply(p, q):
     output_q = np.zeros(4)
@@ -73,3 +79,26 @@ def skew_symmetric(v):
     return np.array([[0, -v[2], v[1]],
                      [v[2], 0, -v[0]],
                      [-v[1], v[0], 0]])
+
+def N(latitude):
+    return a/np.sqrt(1-e_squared*(np.sin(latitude)**2))
+
+def geodetic_to_ECEF(lat_lon_alt):
+    if lat_lon_alt.size > 3:
+        lat = lat_lon_alt[:,0]
+        lon = lat_lon_alt[:,1]
+        alt = lat_lon_alt[:,2]
+    else:
+        lat = lat_lon_alt[0]
+        lon = lat_lon_alt[1]
+        alt = lat_lon_alt[2]
+    N_lat = N(lat)
+    x = (N_lat + alt)*np.cos(lat)*np.cos(lon)
+    y = (N_lat + alt)*np.cos(lat)*np.sin(lon)
+    z = ((1-e_squared)*N_lat+alt)*np.sin(lat)
+    # return np.vstack((x.T,y.T,z.T)).T
+    return np.vstack((x,y,z)).T.squeeze()
+
+def ECEF_to_geodetic(ECEF_xyz):
+    
+    return
