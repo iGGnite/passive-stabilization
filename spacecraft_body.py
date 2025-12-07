@@ -4,26 +4,8 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from shapely.geometry import Polygon, MultiPolygon
-# from shapely.set_operations import unary_union
+from shapely.set_operations import unary_union
 
-from dynamics_helper_functions import quat_to_CTM
-
-
-def set_axes_equal(ax):
-    """
-    Set 3D plot axes to have equal scale so that spheres appear as spheres,
-    cubes as cubes, etc. This makes one unit along x, y or z look the same.
-    """
-    limits = np.array([
-        ax.get_xlim3d(),
-        ax.get_ylim3d(),
-        ax.get_zlim3d(),
-    ])
-    center = np.mean(limits, axis=1)
-    radius = 0.5 * np.max(limits[:, 1] - limits[:, 0])
-    ax.set_xlim3d([center[0] - radius, center[0] + radius])
-    ax.set_ylim3d([center[1] - radius, center[1] + radius])
-    ax.set_zlim3d([center[2] - radius, center[2] + radius])
 
 
 def extract_polygon(geom):
@@ -326,7 +308,7 @@ class CubeSat:
     @R_aero_to_body.setter
     def R_aero_to_body(self, new_R_a_b):
         self._R_aero_to_body = new_R_a_b
-        self.particle_velocity_vector_b = new_R_a_b.T @ np.array([-self.velocity, 0, 0])
+        self.particle_velocity_vector_b = self._R_aero_to_body.T @ np.array([-self.velocity, 0, 0])
         self.project_panels()
 
     ###### Make panels moveable during the simulation if wanted ######
@@ -346,119 +328,3 @@ class CubeSat:
 
     def get_inertia(self):
         return self._inertia
-
-    ###### VISUALISE CUBESAT ######
-    def visualise(self,
-                  show_center_of_mass: bool = True,
-                  show_velocity_vector: bool = False,
-                  show_panel_vectors: bool = False,
-                  show_shadow_axis_system: bool = False,
-                  show_particle_vectors: bool = False,
-                  highlight_nodes: bool = False,
-                  impacts: np.ndarray = None,
-                  particle_vectors: list[np.ndarray] = None,
-                  p_at_impact_vectors: np.ndarray = None,
-                  points_in_projection: np.ndarray = None,
-                  projection_borders: bool = False, ):
-        """
-        Function to create 3D plot of CubeSat. Very useful for debugging purposes.
-
-        3D render CubeSat in body frame, with various options to show. Can show geometric, mass, or construction features;
-        or particle generation location, impact location, momentum transfer vector, etcetera.
-        :param show_center_of_mass: Visualise location of center of mass in spacecraft body.
-        :param show_velocity_vector: Visualise direction of incoming particles.
-        :param show_panel_vectors: Visualise normal and forward vectors of each panel.
-        :param show_shadow_axis_system: Render the axis system created in the plane normal to the velocity vector, with which particles are generated.
-        :param show_particle_vectors: Render direction of particles. Renders identical vectors if none are provided with 'particle_vectors'.
-        :param highlight_nodes: Highlight the vertices making up the CubeSat body.
-        :param impacts: Visualise impact locations by providing 3D coordinates of impacts.
-        :param particle_vectors: Individual direction vectors for each particle. Useful for particles from different directions.
-        :param p_at_impact_vectors: Render vectors of momentum transfer to spacecraft.
-        :param points_in_projection: Render points generated in velocity normal plane.
-        :param projection_borders: Render plane in which particles are generated.
-        """
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
-        for panel in self.panel_vertices:  # Draw the panels which make up the cubesat
-            vertices = [panel]
-            panel_collection = Poly3DCollection(vertices, facecolors='skyblue', edgecolors='k', linewidths=.5,
-                                                alpha=0.3)
-            ax.add_collection3d(panel_collection)
-            if highlight_nodes:
-                ax.scatter(panel[:, 0], panel[:, 1], panel[:, 2], color='r')
-
-        if show_center_of_mass:
-            ax.scatter(self.com[0], self.com[1], self.com[2], color='orange')
-
-        if show_velocity_vector:
-            vel_vec = self.particle_velocity_vector_b / np.linalg.norm(self.particle_velocity_vector_b) / 2
-            ax.quiver(0 - vel_vec[0], 0 - vel_vec[1], 0 - vel_vec[2], vel_vec[0], vel_vec[1], vel_vec[2], color='black')
-
-        if show_panel_vectors:
-            for panel, nodes in zip(self.panels, self.panel_vertices):
-                center = nodes.mean(axis=0)
-                n_vec = panel.body_normal_vector / np.linalg.norm(panel.body_normal_vector) * 0.3
-                f_vec = panel.body_forward_vector / np.linalg.norm(panel.body_forward_vector) * 0.3
-                ax.quiver(center[0], center[1], center[2],
-                          n_vec[0], n_vec[1], n_vec[2],
-                          color='b', arrow_length_ratio=0.2, linewidth=2)
-                ax.quiver(center[0], center[1], center[2],
-                          f_vec[0], f_vec[1], f_vec[2],
-                          color='g', arrow_length_ratio=0.2, linewidth=2)
-            legend_elements = [Line2D([0], [0], color='b', lw=2, label='Panel normal vector'),
-                               Line2D([0], [0], color='g', lw=2, label='Panel forward vector')]
-            ax.legend(handles=legend_elements, loc="best")
-
-        if show_shadow_axis_system:  # Visualise the axis system basis generated for the 2D CubeSat shadow
-            x_vec, y_vec, z_vec, origin = self.shadow_projection_axis_system
-            axis_length = 0.5  # scale for visibility
-            ax.quiver(*origin, *(x_vec * axis_length), color='darkred', arrow_length_ratio=0.2, linewidth=2)
-            ax.quiver(*origin, *(y_vec * axis_length), color='darkgreen', arrow_length_ratio=0.2, linewidth=2)
-            ax.quiver(*origin, *(z_vec * axis_length), color='darkblue', arrow_length_ratio=0.2, linewidth=2)
-
-        if particle_vectors is not None and impacts is not None:
-            if len(particle_vectors) != len(impacts):
-                raise ValueError("Number of specified impacts and particle vectors must match")
-        if impacts is not None:  # Plot the impact locations of particles with an arrow indicating the particle direction
-            vec_x_dir, vec_y_dir, vec_z_dir = self.particle_velocity_vector_b / np.linalg.norm(
-                self.particle_velocity_vector_b) / 5
-            for idx in range(impacts.shape[0]):
-                impact_coords = impacts[idx, :]  #TODO: VECTORIZE
-                ax.scatter(impact_coords[0], impact_coords[1], impact_coords[2], marker='x', color='r')
-                if particle_vectors is not None and show_particle_vectors is True:  # If the particles have a specified direction, overwrite
-                    particle_vector = particle_vectors[idx]
-                    vec_x_dir, vec_y_dir, vec_z_dir = particle_vector / np.linalg.norm(particle_vector)
-                    ax.quiver(impact_coords[0] - vec_x_dir, impact_coords[1] - vec_y_dir, impact_coords[2] - vec_z_dir,
-                              vec_x_dir, vec_y_dir, vec_z_dir)
-                if p_at_impact_vectors is not None:
-                    p_vector = p_at_impact_vectors[idx]
-                    vec_x_dir, vec_y_dir, vec_z_dir = p_vector * 1e4
-                    ax.quiver(impact_coords[0], impact_coords[1], impact_coords[2],
-                              vec_x_dir, vec_y_dir, vec_z_dir)
-        if points_in_projection is not None:
-            ax.scatter(points_in_projection[:, 0], points_in_projection[:, 1], points_in_projection[:, 2], marker='o',
-                       color='purple')
-
-        if projection_borders:
-            vertices = np.array([[-self.max_dist_from_geom_center, -self.max_dist_from_long_axis],
-                                 [-self.max_dist_from_geom_center, self.max_dist_from_long_axis],
-                                 [self.max_dist_from_geom_center, self.max_dist_from_long_axis],
-                                 [self.max_dist_from_geom_center, -self.max_dist_from_long_axis],
-                                 ])
-            print(vertices[:, 0])
-            vertices = ((vertices[:, 0] * (self.shadow_projection_axis_system[0])[:, None] +
-                         vertices[:, 1] * (self.shadow_projection_axis_system[1])[:, None]).T +
-                        self.shadow_projection_axis_system[3])
-            print(vertices)
-            ax.add_collection3d(
-                Poly3DCollection([vertices], facecolors='cyan', linewidths=1, edgecolors='r', alpha=0.5))
-        ax.set_xlabel('Length (x)')
-        ax.set_ylabel('Width (y)')
-        ax.set_zlabel('Height (z)')
-        ax.set_xlim(-(2 * self.x_len + .2), 0.5)
-        ax.set_ylim(-(self.y_width + .5), (self.y_width + .5))
-        ax.set_zlim(-(self.z_width + .5), (self.z_width + .5))
-        plt.title("CubeSat configuration")
-        ax.set_box_aspect([1, 1, 1])
-        set_axes_equal(ax)
-        plt.show()

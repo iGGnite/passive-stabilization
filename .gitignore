@@ -6,3 +6,4 @@ main.py
 test.py
 state.pickle
 minimum_working_example.py
+SimulatorConfigs/Failure20k.yaml

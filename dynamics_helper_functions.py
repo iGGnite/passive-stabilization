@@ -19,6 +19,17 @@ def quat_multiply(p, q):
     ])
     return output_q
 
+def quat_to_eul(quaternion):
+    if quaternion.size > 4:
+        print('quaternion set')
+        q0, q1, q2, q3 = quaternion[:,0], quaternion[:,1], quaternion[:,2], quaternion[:,3]
+    else:
+        q0, q1, q2, q3 = quaternion[0], quaternion[1], quaternion[2], quaternion[3]
+    phi = np.arctan2(2*(q0*q1 + q2*q3), (1-2*q1**2 - 2*q2**2))
+    theta = np.arcsin(2*(q0*q2 - q1*q3))
+    psi = np.arctan2(2*(q0*q3 + q1*q2), (1-2*q2**2 - 2*q3**2))
+    return np.array([phi, theta, psi]).T
+
 def eul_to_quat(euler_angles: np.ndarray) -> np.ndarray:
     if euler_angles.size > 3:
         phi, theta, psi = euler_angles[:,0], euler_angles[:,1], euler_angles[:,2]
@@ -28,7 +39,9 @@ def eul_to_quat(euler_angles: np.ndarray) -> np.ndarray:
     q1 = np.sin(phi/2)*np.cos(theta/2)*np.cos(psi/2) - np.cos(phi/2)*np.sin(theta/2)*np.sin(psi/2)
     q2 = np.cos(phi/2)*np.sin(theta/2)*np.cos(psi/2) + np.sin(phi/2)*np.cos(theta/2)*np.sin(psi/2)
     q3 = np.cos(phi/2)*np.cos(theta/2)*np.sin(psi/2) - np.sin(phi/2)*np.sin(theta/2)*np.cos(psi/2)
-    return np.array([q0, q1, q2, q3])
+    q = np.array([q0, q1, q2, q3])
+    q *= np.sign(q[0])
+    return q
 
 def q_update(q, omega_ib_b,dt):
     theta = omega_ib_b*dt
@@ -44,18 +57,6 @@ def q_update(q, omega_ib_b,dt):
     dq[1:4] = 0.5*theta
     q_out = quat_multiply(q,dq)
     return q_out / np.linalg.norm(q_out)
-
-
-
-def quat_to_eul(quaternion):
-    if quaternion.size > 4:
-        q0, q1, q2, q3 = quaternion[:,0], quaternion[:,1], quaternion[:,2], quaternion[:,3]
-    else:
-        q0, q1, q2, q3 = quaternion[0], quaternion[1], quaternion[2], quaternion[3]
-    phi = np.arctan2(2*(q0*q1 + q2*q3), (1-2*q1**2 - 2*q2**2))
-    theta = np.arcsin(2*(q0*q2 - q1*q3))
-    psi = np.arctan2(2*(q0*q3 + q1*q2), (1-2*q2**2 - 2*q3**2))
-    return np.array([phi, theta, psi]).T
 
 def quat_to_CTM(quaternion):
     # print(quaternion.shape)
@@ -75,30 +76,64 @@ def quat_to_CTM(quaternion):
                       ])
         return C
 
+
+def CTM_to_quat(C):
+    """
+    :param C:
+    :return:
+    """
+    r11, r12, r13 = C[0,:]
+    r21, r22, r23 = C[1,:]
+    r31, r32, r33 = C[2,:]
+    q0 = 0.5 * np.sqrt(1 + r11 + r22 + r33)
+    q1 = 0.5 * np.sqrt(1 + r11 - r22 - r33) * np.sign(r32 - r23)
+    q2 = 0.5 * np.sqrt(1 - r11 + r22 - r33) * np.sign(r13 - r31)
+    q3 = 0.5 * np.sqrt(1 - r11 - r22 + r33) * np.sign(r21 - r12)
+    q = np.array([q0, q1, q2, q3])
+    q *= np.sign(q[0])
+    return q
+
+
 def skew_symmetric(v):
     return np.array([[0, -v[2], v[1]],
                      [v[2], 0, -v[0]],
                      [-v[1], v[0], 0]])
 
-def N(latitude):
-    return a/np.sqrt(1-e_squared*(np.sin(latitude)**2))
+def gravitation_acceleration_ECI(state):
+    r = state[:3]
+    return -GM / np.linalg.norm(r)**3*r
 
-def geodetic_to_ECEF(lat_lon_alt):
-    if lat_lon_alt.size > 3:
-        lat = lat_lon_alt[:,0]
-        lon = lat_lon_alt[:,1]
-        alt = lat_lon_alt[:,2]
-    else:
-        lat = lat_lon_alt[0]
-        lon = lat_lon_alt[1]
-        alt = lat_lon_alt[2]
-    N_lat = N(lat)
-    x = (N_lat + alt)*np.cos(lat)*np.cos(lon)
-    y = (N_lat + alt)*np.cos(lat)*np.sin(lon)
-    z = ((1-e_squared)*N_lat+alt)*np.sin(lat)
-    # return np.vstack((x.T,y.T,z.T)).T
-    return np.vstack((x,y,z)).T.squeeze()
 
-def ECEF_to_geodetic(ECEF_xyz):
-    
-    return
+# def CTM_to_quat(C):
+#     """
+#
+#     :param C:
+#     :return:
+#     """
+#
+#     r11, r12, r13 = C[0,:]
+#     # r12 = C[0,1]
+#     # r13 = C[0,2]
+#     r21, r22, r23 = C[1,:]
+#     # r22 = C[1,1]
+#     # r23 = C[1,2]
+#     r31, r32, r33 = C[2,:]
+#     # r32 = C[2,1]
+#     # r33 = C[2,2]
+#     q0 = (
+#         0.5*np.sqrt(1 + r11 + r22 + r33) if r11 + r22 + r33 > 0 else
+#         0.5*np.sqrt(((r32 - r23)**2 + (r13 - r31)**2 + (r21 - r12)**2)/(3 - r11 - r22 - r33))
+#     )
+#     q1 = (
+#         0.5 * np.sqrt(1 + r11 - r22 - r33) if r11 - r22 - r33 > 0 else
+#         0.5 * np.sqrt(((r32 - r23)**2 + (r12 + r21)**2 + (r31 + r13)**2)/(3 - r11 + r22 + r33))
+#     )
+#     q2 = (
+#         0.5 * np.sqrt(1 - r11 + r22 - r33) if -r11 + r22 - r33 > 0 else
+#         0.5 * np.sqrt(((r13 - r31)**2 + (r12 + r21)**2 + (r23 + r32)**2)/(3 + r11 - r22 + r33))
+#     )
+#     q3 = (
+#         0.5 * np.sqrt(1 - r11 - r22 + r33) if -r11 - r22 + r33 > 0 else
+#         0.5 * np.sqrt(((r21 - r12)**2 + (r21 + r12)**2 + (r32 + r23)**2)/(3 + r11 + r22 - r33))
+#     )
+#     return np.array([q0, q1, q2, q3])

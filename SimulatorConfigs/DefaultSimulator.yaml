@@ -1,22 +1,30 @@
 ---
 # This file specifies the default simulator settings
+simulator_id: default
 simulator_settings:
-  timestep: 10  # s
-  runtime: 100000  # s
+  timestep: 10 # s
+  runtime: 10000  # s
   impact_type: elastic # elastic transfers more momentum, factor 2 of inelastic
   atmospheric_density: 7.7e-16  # g/cm^3
   particle_number: 300
 state:
-  altitude: 500e3  # m
-  position: # Coordinates in inertial frame
-    - ...
-    - ...
-    - ...
-  attitude: # Euler angles (currently in inertial frame, which is for now identical to the aerodynamic frame)
-    - 20 # deg
-    - 15 # deg
-    - 50 # deg
-  velocity: 7500  # m/s
+  format: Kepler  # Specify initial position representation: ECI, PEF, Kepler
+  date: 05-12-2025  # Julian date, taken at 12:00 UTC
+  kepler_state: # minimal Kepler elements: orbital altitude (km), inclination (deg), and true anomaly (deg) with the other states auto-set
+    - 500
+    - 40
+    - -20
+  cartesian_state: # Initial position/velocity specification in x,y,z [km(/s)]
+    - 10000
+    - 10000
+    - 10000
+    - 6
+    - 2
+    - 1
+  attitude: # Euler angles with respect to Local Vertical Local Horizontal frame axes,
+    - 0 # deg
+    - 0 # deg
+    - 0 # deg
   rotation_rates:
     - 0 # deg/s
     - 0 # deg/s

@@ -1,6 +1,7 @@
 import numpy as np
 from spacecraft_body import *
 from dynamics_helper_functions import *
+from transformation_functions import *
 from time import time
 from yaml import load, CLoader
 
@@ -21,6 +22,7 @@ class PassiveStabilization:
             settings = (load(f, Loader=CLoader))
             sim_settings = settings["simulator_settings"]
             state_init = settings["state"]
+            print(f"Loaded simulator settings {settings["simulator_id"]}")
         self.dt = sim_settings["timestep"]  # Simulation time step (s)
         self.simulation_duration = sim_settings["runtime"]  # Simulation time (s)
         self.air_density = sim_settings["atmospheric_density"]  # Air density (kg/m^3)
@@ -33,20 +35,23 @@ class PassiveStabilization:
             raise ValueError("Impact type is currently limited to elastic or inelastic")
 
         ######## LOAD INITIAL STATE ########
-        self.altitude = state_init["altitude"]  # Altitude (m)
-        if state_init["attitude"][1] == 0 and state_init["attitude"][
-            2] == 0:  # if pitch and yaw are both exactly zero, cross product evals to NaN
-            self._inertial_to_body_quat = eul_to_quat(
-                np.deg2rad(np.array(state_init["attitude"]) + np.array([0, 0, 1e-10])))
-        else:
-            self._inertial_to_body_quat = eul_to_quat(np.deg2rad(np.array(state_init["attitude"])))
-        self.particle_velocity = state_init["velocity"]  # Total velocity of incoming particles (m/s)
-        self.omega_ib_b = np.deg2rad(np.array(state_init["rotation_rates"]))  # Body angular rates (rad/s)
+        self.julian_day = calendar_to_JD(state_init["date"])
+        self.ECI_position, self.ECI_velocity = initialise_state(state_init)
+        self._ECI_to_body_quat, self.omega_ib_b = initialise_rotational_state(state_init, self.ECI_position, self.ECI_velocity)
+        # if state_init["attitude"][1] == 0 and state_init["attitude"][
+        #     2] == 0:  # if pitch and yaw are both exactly zero, cross product evals to NaN
+        #     self._inertial_to_body_quat = eul_to_quat(
+        #         np.deg2rad(np.array(state_init["attitude"]) + np.array([0, 0, 1e-10])))
+        #
+        # else:
+        #     self._inertial_to_body_quat = eul_to_quat(np.deg2rad(np.array(state_init["attitude"])))
+        self.particle_velocity = np.linalg.norm(self.ECI_velocity)  # Total velocity of incoming particles (m/s)
+        # self.omega_ib_b = np.deg2rad(np.array(state_init["rotation_rates"]))  # Body angular rates (rad/s)
 
         ######## CALCULATE DERIVATIVE PARAMETERS ########
-        self.R_inertial_to_body = quat_to_CTM(self._inertial_to_body_quat)
-        self.v_particle_inertial_frame = np.array([-self.particle_velocity, 0, 0])
-        self.v_particle_body_frame = self.R_inertial_to_body @ self.v_particle_inertial_frame
+        self.R_inertial_to_body = quat_to_CTM(self._ECI_to_body_quat)
+        self.v_particle_ECI_frame = -self.ECI_velocity
+        self.v_particle_body_frame = self.R_inertial_to_body @ self.v_particle_ECI_frame
 
         ######## PREALLOCATE PARAMETERS ########
         self.com = None
@@ -79,11 +84,12 @@ class PassiveStabilization:
         start = time()
         time_points = np.arange(0, self.simulation_duration, self.dt)
         state = np.zeros((len(time_points), 14))
-        impact_history = np.zeros((len(time_points), 3))
+        impact_history = np.zeros((len(time_points), 9))
         state[:, 0] = time_points
         impact_history[:, 0] = time_points
         for t_idx, t in enumerate(time_points):
             self.step = t_idx
+            # print(f"time {t}s")
             state[t_idx, 1:], impact_history[t_idx, 1:] = self.simulate_timestep(visualise_timestep=visualise_timesteps)
         stop = time()
         print(
@@ -103,19 +109,15 @@ class PassiveStabilization:
             self.sat.generate_impacting_particles(n_particles=self.n_particles))
         d_p, d_L, n_impacts = self.calculate_momentum_exchange(impact_panel_indices=impact_panel_indices,
                                                                impact_coordinates=impact_coordinates)
-        # Numerically integrate state with forward Euler
-        torque = d_L / self.dt
-        kinematics = np.cross(self.omega_ib_b, self.inertia @ self.omega_ib_b)
-        omega_ib_b_dot = self.inertia_inv.dot(torque - kinematics)
-        self.omega_ib_b += omega_ib_b_dot * self.dt
-        self.inertial_to_body_quat = q_update(self._inertial_to_body_quat, self.omega_ib_b, self.dt)
+        torque, kinematics = self.integrate_attitude(d_L)
+        self.integrate_position()
         if visualise_timestep and self.step % int(interval / self.dt) == 0:
             self.visualise_3d(show_velocity_vector=True,
                               impacts=impact_coordinates,
                               p_at_impacts=None,
                               points_in_projection=points_in_projection, )
-        return np.hstack((self._inertial_to_body_quat, self.omega_ib_b, torque, -kinematics)), np.array(
-            [self.n_particles, n_impacts])
+        return (np.hstack((self._ECI_to_body_quat, self.omega_ib_b, self.ECI_position, self.ECI_velocity)),
+                np.concatenate([torque, -kinematics, [self.n_particles, n_impacts]]))
 
     def calculate_momentum_exchange(self,
                                     impact_panel_indices: list[int] = None,
@@ -145,6 +147,34 @@ class PassiveStabilization:
         #                          panel_normals)
         #TODO: Implement second collision check/simulation, using particle_velocity_out
         return linear_momentum_transfer, total_angular_momentum, p_normal_to_panel.shape[0]
+
+
+    def integrate_attitude(self, angular_momentum_transfer: np.ndarray):
+        """Integrate the spacecraft attitude using forward Euler method"""
+        torque = angular_momentum_transfer / self.dt
+        kinematics = np.cross(self.omega_ib_b, self.inertia @ self.omega_ib_b)
+        omega_ib_b_dot = self.inertia_inv.dot(torque - kinematics)
+        self.omega_ib_b += omega_ib_b_dot * self.dt
+        self.inertial_to_body_quat = q_update(self._ECI_to_body_quat, self.omega_ib_b, self.dt)
+        return torque, kinematics
+
+    def integrate_position(self):
+        """Integrate the position using fixed step Runge-Kutta 4 method"""
+        k1r = self.ECI_velocity
+        k1v = gravitation_acceleration_ECI(self.ECI_position)
+
+        k2r = self.ECI_velocity + self.dt * k1v / 2
+        k2v = gravitation_acceleration_ECI(self.ECI_position + self.dt * k1r / 2)
+
+        k3r = self.ECI_velocity + self.dt * k2v / 2
+        k3v = gravitation_acceleration_ECI(self.ECI_position + self.dt * k2r / 2)
+
+        k4r = self.ECI_velocity + self.dt * k3v
+        k4v = gravitation_acceleration_ECI(self.ECI_position + self.dt * k3r)
+
+        self.ECI_position += self.dt / 6 * (k1r + 2 * k2r + 2 * k3r + k4r)
+        self.ECI_velocity += self.dt / 6 * (k1v + 2 * k2v + 2 * k3v + k4v)
+
 
     def show_attitude(self):
         aero_axes = np.eye(3)
@@ -182,15 +212,16 @@ class PassiveStabilization:
 
     @property
     def inertial_to_body_quat(self):
-        return self._inertial_to_body_quat
+        return self._ECI_to_body_quat
 
     @inertial_to_body_quat.setter
     def inertial_to_body_quat(self, new_quaternion_attitude):
         """Redefines satellite body attitude wrt inertial frame, and updates associated parameters elsewhere."""
-        self._inertial_to_body_quat = new_quaternion_attitude
-        self.R_inertial_to_body = quat_to_CTM(self._inertial_to_body_quat)
-        self.v_particle_body_frame = self.R_inertial_to_body.T @ self.v_particle_inertial_frame
-        self.sat.R_aero_to_body = self.R_inertial_to_body  #TODO: Untangle aerodynamic and inertial orientation in future expansion
+        self._ECI_to_body_quat = new_quaternion_attitude
+        self.R_inertial_to_body = quat_to_CTM(self._ECI_to_body_quat)  # Calculate rotation matrix from attitude quaternion
+        self.v_particle_ECI_frame = - self.ECI_velocity  # Redefine direction of particles from flight direction
+        self.v_particle_body_frame = self.R_inertial_to_body.T @ self.v_particle_ECI_frame # Translate from ECI to body
+        self.sat.R_aero_to_body = self.R_inertial_to_body #TODO: Assess effect of Earth rotation on aero vector
 
     def set_panel_angles(self, panel_angles: np.ndarray):
         """Sets new panel angles for rear panels"""
