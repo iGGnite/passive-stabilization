@@ -5,6 +5,7 @@ from matplotlib.animation import FuncAnimation
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from spacecraft_body import CubeSat
+from simulation import PassiveStabilization
 from transformation_functions import a
 
 # Create Earth
@@ -370,4 +371,40 @@ def visualise(CubeSat,
     plt.title("CubeSat configuration")
     ax.set_box_aspect([1, 1, 1])
     set_axes_equal(ax)
+    plt.show()
+
+def show_attitude(sim: PassiveStabilization):
+    aero_axes = np.eye(3)
+    body_axes = sim.R_inertial_to_body @ np.eye(3)
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.quiver(0, 0, 0, body_axes[:, 0], body_axes[:, 1], body_axes[:, 2], color=['red', 'green', 'blue'])
+    ax.quiver(0, 0, 0, aero_axes[:, 0], aero_axes[:, 1], aero_axes[:, 2],
+              color=['orange', 'darkgreen', 'lightblue'])
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+    plt.show()
+
+def visualise_3d(sim: PassiveStabilization,
+                 show_velocity_vector: bool = False,
+                 impacts: np.ndarray = None,
+                 p_at_impacts: np.ndarray = None,
+                 points_in_projection: np.ndarray = None, ):
+    """Provide 3D visualisation of CubeSat body, with options for additional phenomena like impacts and momentum
+    exchange
+    :param: sim: PassiveStabilization object which is to be visualized
+        :type sim: PassiveStabilization object
+    :param show_velocity_vector: Whether to show the velocity vector
+        :type show_velocity_vector: bool
+    :param impacts: Numpy array containing location of particle impacts
+        :type impacts: np.ndarray
+    :param p_at_impacts: Numpy array containing vectors representing momentum transfer at particle impacts
+        :type p_at_impacts: np.ndarray
+    :param points_in_projection: Numpy array containing points generated on projection plane
+        :type points_in_projection: np.ndarray
+    :return:
+    """
+    visualise(sim.sat,show_velocity_vector=False, impacts=None, show_shadow_axis_system=False,
+                       p_at_impact_vectors=p_at_impacts, points_in_projection=points_in_projection)
     plt.show()
