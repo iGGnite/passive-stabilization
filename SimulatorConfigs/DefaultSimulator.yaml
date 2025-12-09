@@ -15,12 +15,12 @@ state:
     - 40
     - -20
   cartesian_state: # Initial position/velocity specification in x,y,z [km(/s)]
-    - 10000
-    - 10000
-    - 10000
-    - 6
-    - 2
-    - 1
+    - 6463.33458365453
+    - -1802.08998507805
+    - -1512.13304182726
+    - 2.60366533849
+    - 5.47990790596
+    - 4.59818870278
   attitude: # Euler angles with respect to Local Vertical Local Horizontal frame axes,
     - 0 # deg
     - 0 # deg
