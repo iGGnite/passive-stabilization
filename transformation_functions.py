@@ -50,7 +50,7 @@ def ECI_to_PEF(position, jd):
     ])
     return R @ position
 
-def PEF_to_inertial(position: np.ndarray, jd: float):
+def PEF_to_ECI(position: np.ndarray, jd: float):
     """
     Pseudo Earth fixed frame to inertial frame
     :param position:
@@ -119,32 +119,29 @@ def initialise_state(state_init):
             ECI_state = np.array(state_init["cartesian_state"])*1000 # Change km to m units
         else:
             jd = calendar_to_JD(state_init["date"])
-            ECI_state = ECI_to_PEF(np.array(state_init["cartesian_state"]),
+            ECI_state = PEF_to_ECI(np.array(state_init["cartesian_state"]),
                                    jd)
         return ECI_state[0:3], ECI_state[3:6]
     else:
         raise ValueError("Unknown state format")
 
-def initialise_rotational_state(state_init, pos, vel):
+def initialise_rotational_state(state_init, r, v):
     """
     Initialises attitude and rotational rates of the vehicle
     :param state_init: dictionary loaded from yaml file
-    :param pos: position of the vehicle in the ECI frame (used to construct Local Vertical Local Horizontal frame)
-    :param vel: velocity of the vehicle in the ECI frame (used to construct Local Vertical Local Horizontal frame)
+    :param r: position of the vehicle in the ECI frame (used to construct Local Vertical Local Horizontal frame)
+    :param v: velocity of the vehicle in the ECI frame (used to construct Local Vertical Local Horizontal frame)
     :return:
     """
-    r = pos / np.linalg.norm(pos)
-    v = vel / np.linalg.norm(vel)
-    R_ECI_to_LVLH = np.vstack([v, np.cross(r, v), r]).T # Shows x, y, and z vectors
-
-    if state_init["attitude"][1] == 0 and state_init["attitude"][2] == 0:  # if pitch and yaw are both exactly zero, cross product evals to NaN
-        print(f"Initial attitude is 0")
-        eul_angles = np.deg2rad(np.array(state_init["attitude"]) + np.array([1e-10, 1e-10, 1e-10]))
-    else:
-        eul_angles = np.deg2rad(np.array(state_init["attitude"])) + np.array([1e-10, 1e-10, 1e-10])
+    pos = r / np.linalg.norm(r)
+    vel = v / np.linalg.norm(v)
+    x = np.cross(np.cross(pos, vel), pos)
+    y = np.cross(pos, vel)
+    z = pos
+    R_ECI_to_LVLH = np.vstack([x, y, z]).T # x, y, and z basis vectors of LVLH frame
+    eul_angles = np.deg2rad(np.array(state_init["attitude"]) + np.array([1e-10, 1e-10, 1e-10])) # Add negligible perturbation to ensure valid cross product
     LVLH_to_body_quat = eul_to_quat(eul_angles)
     R_LVLH_to_body = quat_to_CTM(LVLH_to_body_quat)
-
     R_ECI_to_body =  R_ECI_to_LVLH @ R_LVLH_to_body
     inertial_to_body_quat = CTM_to_quat(R_ECI_to_body)
     omega_ib_b = np.deg2rad(np.array(state_init["rotation_rates"]))
